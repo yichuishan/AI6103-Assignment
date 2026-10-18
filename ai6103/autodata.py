@@ -81,9 +81,9 @@ def csv_fields(path):
 
 
 def split_csv_manifest(root, output):
-    choices = {"train": ["train.csv", "training.csv"],
-               "val": ["val.csv", "valid.csv", "validation.csv"],
-               "test": ["test.csv", "testing.csv"]}
+    choices = {"train": ["train.csv", "training.csv", "train_labels.csv", "training_labels.csv"],
+               "val": ["val.csv", "valid.csv", "validation.csv", "val_labels.csv", "valid_labels.csv", "validation_labels.csv"],
+               "test": ["test.csv", "testing.csv", "test_labels.csv", "testing_labels.csv"]}
     selected = {}
     for split, options in choices.items():
         found = [root/n for n in options if (root/n).is_file()]
@@ -94,14 +94,21 @@ def split_csv_manifest(root, output):
     for split, path in selected.items():
         with path.open(newline="", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
-            fields = reader.fieldnames or []
-            path_keys = [n for n in ("path", "image_path", "file", "filename", "image", "id") if n in fields]
-            label_keys = [n for n in ("label", "breed", "class", "target") if n in fields]
+            fields = {n.strip().lower():n for n in (reader.fieldnames or [])}
+            path_keys = [fields[n] for n in ("path", "image_path", "file_path", "file", "filename",
+                                            "image_name", "image", "image_id", "id") if n in fields]
+            label_keys = [fields[n] for n in ("label", "labels", "breed", "class", "class_name",
+                                             "target", "breed_name", "breed_id", "class_id") if n in fields]
             if len(path_keys) != 1 or len(label_keys) != 1:
-                return None
+                raise ValueError(f"Cannot unambiguously identify image/label columns in {path}: "
+                                 f"{list(reader.fieldnames or [])}. Supply --manifest path,label,split CSV.")
             for r in reader:
                 relative = Path(r[path_keys[0]].replace("\\", "/"))
-                prefixes = [root, root/path.stem, root/split, root/"images", root/f"{split}_images"]
+                prefixes = [root, root/path.stem, root/split, root/split/"images",
+                            root/"images", root/f"{split}_images"]
+                if split=="val":
+                    prefixes += [root/n for n in ("valid","validation")]
+                    prefixes += [root/n/"images" for n in ("valid","validation")]
                 paths = set()
                 for prefix in prefixes:
                     candidate = prefix/relative

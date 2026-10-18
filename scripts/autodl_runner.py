@@ -2,6 +2,7 @@
 import argparse
 from contextlib import contextmanager
 import fcntl
+import hashlib
 import importlib.util
 import json
 import os
@@ -115,6 +116,21 @@ def copy_report(work):
     return report
 
 
+def check_input_binding(work,binding):
+    """Permit correcting a failed preparation, never reuse another trained run."""
+    saved=work/"input.json"
+    if not saved.exists() or json.loads(saved.read_text())==binding:
+        return
+    has_runs=any(p.is_file() for p in (work/"runs").rglob("*"))
+    if (work/"prepared.json").exists() or has_runs:
+        raise ValueError("Output directory belongs to another data/configuration. Choose a new --output directory.")
+    previous=saved.read_bytes()
+    backup=work/("input-before-failed-preparation-"+hashlib.sha256(previous).hexdigest()[:12]+".json")
+    if not backup.exists():
+        backup.write_bytes(previous)
+    print("Updating input configuration after unsuccessful data preparation; previous configuration preserved:",backup,flush=True)
+
+
 def preflight(args,work):
     status(work,"preflight")
     ensure_dependencies(args.skip_install,args.smoke)
@@ -144,9 +160,7 @@ def preflight(args,work):
              "manifest_sha256":file_sha256(manifest) if manifest else None,
              "resplit":resplit,"seed":args.seed,"precision":precision,"workers":args.workers}
     saved=work/"input.json"
-    if saved.exists() and load_json(saved)!=binding:
-        raise ValueError("Output directory belongs to another data/configuration. Choose a new --output directory.")
-    write_json(saved,binding)
+    check_input_binding(work,binding)
     prepared=work/"prepared.json"
     if not prepared.exists():
         print("Preparing split validation and training-only RGB statistics...",flush=True)
@@ -154,6 +168,7 @@ def preflight(args,work):
     p=load_json(prepared)
     if any(file_sha256(r["path"]) != r["sha256"] for r in p["rows"]):
         raise ValueError("Prepared dataset images have changed; use a new output directory")
+    write_json(saved,binding)
     print("SPLIT_COUNTS:",p["counts"],"RGB_STATISTICS:",p["statistics"],flush=True)
     if not args.smoke:
         check_gpu_batch(precision)

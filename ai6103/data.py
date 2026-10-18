@@ -37,6 +37,33 @@ def read_manifest(path, root):
     return rows
 
 
+def imagefolder_split_rows(folders):
+    """Infer the breed directory from training paths, allowing image wrappers."""
+    images = {}
+    for split,folder in folders:
+        images[split]=[(p,p.relative_to(folder).parts[:-1]) for p in sorted(folder.rglob("*"))
+                       if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS]
+    training=images["train"]
+    if not training or any(not parts for _,parts in training):
+        raise ValueError("Unlabelled/empty image directories: use the dataset's label CSV or a path,label,split manifest")
+    levels=[]
+    for level in range(min(len(parts) for _,parts in training)):
+        names={parts[level] for _,parts in training}
+        levels.append((level,names))
+    # The assignment's class count resolves wrappers such as views/<view>/<breed>.
+    candidates=[(level,names) for level,names in levels if len(names)==120]
+    if not candidates:
+        candidates=[(level,names) for level,names in levels if len(names)>1] or levels[:1]
+    level,classes=candidates[0]
+    rows=[]
+    for split,items in images.items():
+        for image,parts in items:
+            if level>=len(parts) or parts[level] not in classes:
+                raise ValueError(f"Breed directories do not match training layout for {image}; provide a label manifest")
+            rows.append(dict(path=str(image.resolve()),label=parts[level],split=split))
+    return rows
+
+
 def discover(root, manifest=None, allow_resplit=False, seed=42):
     root = Path(root).resolve()
     if manifest:
@@ -45,14 +72,8 @@ def discover(root, manifest=None, allow_resplit=False, seed=42):
     if len(val_dirs) > 1:
         raise ValueError("Ambiguous validation directories; provide a manifest")
     if (root / "train").is_dir() and val_dirs and (root / "test").is_dir():
-        rows = []
-        for split, folder in (("train", root / "train"), ("val", val_dirs[0]), ("test", root / "test")):
-            for image in sorted(folder.rglob("*")):
-                if image.is_file() and image.suffix.lower() in IMAGE_EXTENSIONS:
-                    if image.parent == folder:
-                        raise ValueError("Unlabelled images: use path,label,split manifest")
-                    rows.append(dict(path=str(image.resolve()), label=image.parent.name, split=split))
-        return rows, "provided split directories"
+        folders=(("train",root/"train"),("val",val_dirs[0]),("test",root/"test"))
+        return imagefolder_split_rows(folders), "provided split directories; breed directory inferred from training paths"
     if not allow_resplit:
         raise ValueError("No labelled split directories found. Provide --manifest, or use "
                          "--allow-resplit ONLY for an unsplit labels.csv dataset.")
@@ -97,7 +118,10 @@ def validate_rows(rows, strict=True):
         raise ValueError(f"Expected {SPLIT_COUNTS}; got {dict(counts)}")
     classes = sorted({r["label"] for r in rows if r["split"] == "train"})
     if strict and len(classes) != 120:
-        raise ValueError(f"Expected 120 dog breeds, got {len(classes)}")
+        examples=[r["path"] for r in rows if r["split"]=="train"][:3]
+        raise ValueError(f"Expected 120 dog breeds, got {len(classes)}. "
+                         f"Detected labels: {classes[:8]}; training path examples: {examples}. "
+                         "Check label CSVs or nested image folders; do not remove the 120-class validation.")
     seen_paths, seen_content = set(), {}
     for r in rows:
         p = Path(r["path"]).resolve()

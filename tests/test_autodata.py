@@ -5,6 +5,7 @@ import zipfile
 import pytest
 
 from ai6103.autodata import extract_zip, find_layout
+from ai6103.data import discover
 
 
 def test_zip_extraction_and_repeatability(tmp_path):
@@ -62,4 +63,35 @@ def test_preserve_unknown_split_metadata(tmp_path):
     (tmp_path/"labels.csv").write_text("id,breed\nimage,breed_a\n")
     (tmp_path/"test_labels.csv").write_text("unknown,format\nx,y\n")
     with pytest.raises(ValueError,match="Split metadata"):
+        find_layout(tmp_path,tmp_path/"work")
+
+
+@pytest.mark.parametrize("columns",[("id","breed"),("filename","label"),("image_id","breed"),("Image","Breed")])
+def test_assignment_split_label_csvs_override_images_folder(tmp_path,columns):
+    import csv
+    for split in ("train","val","test"):
+        folder=tmp_path/split/"images"
+        folder.mkdir(parents=True)
+        with (tmp_path/f"{split}_labels.csv").open("w",newline="") as f:
+            writer=csv.writer(f)
+            writer.writerow(columns)
+            for i,breed in enumerate(("breed_a","breed_b")):
+                identity=f"{split}_{i}"
+                (folder/f"{identity}.jpg").write_bytes(b"path-only fixture")
+                # Assignment archives commonly store IDs without the JPG suffix.
+                writer.writerow([identity,breed])
+    root,manifest,resplit=find_layout(tmp_path,tmp_path/"work")
+    assert manifest is not None and not resplit
+    rows,provenance=discover(root,manifest)
+    assert len(rows)==6
+    assert {r["label"] for r in rows}=={"breed_a","breed_b"}
+    assert "images" not in {r["label"] for r in rows}
+    assert {r["split"] for r in rows}=={"train","val","test"}
+
+
+def test_unrecognized_authoritative_csv_columns_do_not_fall_back_to_images_label(tmp_path):
+    for split in ("train","val","test"):
+        (tmp_path/split/"images").mkdir(parents=True)
+        (tmp_path/f"{split}_labels.csv").write_text("unknown,format\nx,y\n")
+    with pytest.raises(ValueError,match="image/label columns"):
         find_layout(tmp_path,tmp_path/"work")

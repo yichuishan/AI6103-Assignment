@@ -76,6 +76,18 @@ def test_transforms(prepared):
     assert image.shape == (3,100,100) and torch.isfinite(image).all()
 
 
+@pytest.mark.parametrize("layout",["{breed}/images/{file}","images/{breed}/{file}"])
+def test_nested_image_wrappers_do_not_become_breed_labels(tmp_path,layout):
+    for split in ("train","val","test"):
+        for breed in ("breed_a","breed_b"):
+            path=tmp_path/split/layout.format(breed=breed,file="fixture.jpg")
+            path.parent.mkdir(parents=True)
+            path.write_bytes(b"path-only fixture")
+    rows,_=data.discover(tmp_path)
+    assert {r["label"] for r in rows}=={"breed_a","breed_b"}
+    assert len(rows)==6
+
+
 def test_mixup_convex_targets_and_pixels():
     engine.seed_all(23)
     x = torch.arange(24,dtype=torch.float32).reshape(4,6)

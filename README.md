@@ -54,6 +54,8 @@ cat results/status.json
 优先识别现成的 `train/<breed>/`、`val/<breed>/`、`test/<breed>/`，
 支持外层嵌套目录；验证目录也可叫 `valid` 或 `validation`。
 还支持 `path,label,split` CSV，以及常见的 train/val/test 独立标签 CSV。
+作业数据的 `train_labels.csv`、`val_labels.csv`、`test_labels.csv` 配合
+`train/images/`、`val/images/`、`test/images/` 可直接识别，标签取自 CSV，保留现成划分。
 只有原始 `labels.csv` + `train/<id>.jpg`、没有现成划分时，才生成并记录
 新的固定种子精确数量分层划分，不把它冒充为官方划分。
 其他文件结构可显式提供 `--manifest /absolute/path/to/manifest.csv`。
