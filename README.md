@@ -56,6 +56,10 @@ cat results/status.json
 还支持 `path,label,split` CSV，以及常见的 train/val/test 独立标签 CSV。
 作业数据的 `train_labels.csv`、`val_labels.csv`、`test_labels.csv` 配合
 `train/images/`、`val/images/`、`test/images/` 可直接识别，标签取自 CSV，保留现成划分。
+已按实际摘要确认：CSV 为 `id,breed`，`id` 不带扩展名，图片文件为 `<id>.jpg`；
+三个集合均包含 120 类。测试包含与实际图片数、标签行数和类别数量相同的
+10,222 条格式夹具，并检查 CSV 行顺序与文件名排序不同时仍正确匹配标签。
+夹具不含真实图片，其生成的中间类别分布不代表原始数据分布。
 只有原始 `labels.csv` + `train/<id>.jpg`、没有现成划分时，才生成并记录
 新的固定种子精确数量分层划分，不把它冒充为官方划分。
 其他文件结构可显式提供 `--manifest /absolute/path/to/manifest.csv`。

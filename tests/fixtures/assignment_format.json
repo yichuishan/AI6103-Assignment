@@ -1,0 +1,15 @@
+{
+  "description": "Observed format summary supplied by the user; contains no image data or complete label records.",
+  "root_example": "/root/autodl-tmp/data",
+  "columns": ["id", "breed"],
+  "filename_template": "{split}/images/{id}.jpg",
+  "csv_template": "{split}_labels.csv",
+  "id_format": "32 hexadecimal characters, no extension in CSV",
+  "splits": {
+    "train": {"images": 7155, "label_rows": 7155, "classes": 120, "class_size_min": 46, "class_size_max": 88},
+    "val": {"images": 1533, "label_rows": 1533, "classes": 120, "class_size_min": 10, "class_size_max": 19},
+    "test": {"images": 1534, "label_rows": 1534, "classes": 120, "class_size_min": 10, "class_size_max": 19}
+  },
+  "sample_breed_names": ["newfoundland", "beagle", "mexican_hairless", "samoyed", "miniature_poodle", "blenheim_spaniel", "brabancon_griffon", "gordon_setter", "tibetan_terrier"],
+  "known_quality_issue": "At least one byte-identical image occurs across supplied splits; exact overlap counts must be measured on the actual dataset."
+}
