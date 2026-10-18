@@ -60,8 +60,10 @@ chosen epoch; the test uses the selected model's final checkpoint.
 \section{Data Preprocessing}
 The required split sizes are 7,155 training, 1,533 validation, and 1,534
 test images, totaling 10,222. Supplied splits are preserved. The code
-checks split sizes, label membership, repeated paths, and byte-identical
-images across splits. If only the original unsplit labelled images are
+checks split sizes, label membership, repeated paths, and audits byte-identical
+images across splits. Supplied split membership is retained even when duplicate
+bytes are found; the measured overlap is disclosed rather than silently removing
+images. Conflicting labels for identical bytes are rejected. If only the original unsplit labelled images are
 available, an explicitly requested seeded stratified split produces these
 exact counts; its provenance is recorded and must be disclosed. Kaggle's
 unlabelled competition test set is not the assignment's labelled hold-out set.
@@ -242,8 +244,9 @@ metrics and inspect whether any validation improvement compensates for
 reduced training fit. An improvement is not presumed before the experiment.
 
 \input{generated/test}
-The hold-out result estimates performance on similar images under the same
-sampling and preprocessing assumptions. It is not a guarantee under domain
+An independent hold-out result estimates performance on similar images under the same
+sampling and preprocessing assumptions; any measured cross-split content overlap
+weakens this interpretation and is reported explicitly. It is not a guarantee under domain
 shift. Test labels are never used for checkpoint or hyperparameter selection.
 
 \section{Reproducibility and Limitations}

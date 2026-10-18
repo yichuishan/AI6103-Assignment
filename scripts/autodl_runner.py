@@ -169,6 +169,10 @@ def preflight(args,work):
     if any(file_sha256(r["path"]) != r["sha256"] for r in p["rows"]):
         raise ValueError("Prepared dataset images have changed; use a new output directory")
     write_json(saved,binding)
+    if "data_quality_audit" in p:
+        write_json(work/"data_quality_audit.json",p["data_quality_audit"])
+        print("DATA_QUALITY_AUDIT:",work/"data_quality_audit.json",
+              p["data_quality_audit"]["overlap_images"],flush=True)
     print("SPLIT_COUNTS:",p["counts"],"RGB_STATISTICS:",p["statistics"],flush=True)
     if not args.smoke:
         check_gpu_batch(precision)
@@ -218,6 +222,8 @@ def execute(config):
                 if path.is_file() and path.suffix in {".tex",".bib",".bst",".sty",".md",".pdf",".png",".csv",".json"}:
                     archive.write(path,path.relative_to(work))
         archive.write(work/"input.json","input.json")
+        if (work/"data_quality_audit.json").exists():
+            archive.write(work/"data_quality_audit.json","data_quality_audit.json")
     status(work,"complete",smoke=config["smoke"],package=str(package),
            report=str(work/"report/report.pdf"))
     print("COMPLETE:",package,"\nREPORT:",work/"report/report.pdf",flush=True)

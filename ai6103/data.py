@@ -110,7 +110,9 @@ def discover(root, manifest=None, allow_resplit=False, seed=42):
     return rows, f"new stratified exact-count split, seed={seed}; not an official supplied split"
 
 
-def validate_rows(rows, strict=True):
+def validate_rows(rows, strict=True, duplicate_policy="error", audit=None):
+    if duplicate_policy not in {"error","report"}:
+        raise ValueError("duplicate_policy must be error or report")
     counts = Counter(r["split"] for r in rows)
     if set(counts) != set(SPLIT_COUNTS):
         raise ValueError(f"Expected train/val/test; got {dict(counts)}")
@@ -134,10 +136,38 @@ def validate_rows(rows, strict=True):
             raise FileNotFoundError(p)
         # Byte-level leakage detection reads bytes, never test labels/predictions for selection.
         digest = hashlib.sha256(p.read_bytes()).hexdigest()
-        if digest in seen_content and seen_content[digest] != r["split"]:
-            raise ValueError(f"Identical image bytes across splits: {p}")
-        seen_content[digest] = r["split"]
+        seen_content.setdefault(digest,[]).append(r)
         r["sha256"] = digest
+    cross=[]
+    overlap={"train_val":0,"train_test":0,"val_test":0}
+    within_split_groups=0
+    for digest,items in seen_content.items():
+        if len(items)<2:
+            continue
+        labels={r["label"] for r in items}
+        if len(labels)>1:
+            raise ValueError(f"Identical image bytes have conflicting labels: {sorted(labels)}; "
+                             f"paths: {[r['path'] for r in items]}")
+        splits={r["split"] for r in items}
+        if len(splits)<2:
+            within_split_groups+=1
+            continue
+        cross.append({"sha256":digest,"label":items[0]["label"],
+                      "images":[{"path":r["path"],"split":r["split"]} for r in items]})
+        for pair in overlap:
+            earlier,later=pair.split("_")
+            if earlier in splits and later in splits:
+                overlap[pair]+=sum(r["split"]==later for r in items)
+    quality={"cross_split_duplicate_groups":len(cross),
+             "images_in_cross_split_groups":sum(len(g["images"]) for g in cross),
+             "within_split_duplicate_groups":within_split_groups,
+             "overlap_images":overlap,"groups":cross,
+             "policy":"preserve supplied split membership and disclose byte-identical overlap" if duplicate_policy=="report"
+                      else "reject cross-split byte-identical images"}
+    if audit is not None:
+        audit.update(quality)
+    if cross and duplicate_policy=="error":
+        raise ValueError(f"Identical image bytes across splits: {cross[0]['images'][-1]['path']}")
     return classes, dict(counts)
 
 
@@ -189,11 +219,19 @@ def prepare(root, output, manifest=None, allow_resplit=False, seed=42, strict=Tr
     if Path(output).exists():
         raise FileExistsError(f"Prepared data already exists: {output}; preserve it or choose a new output")
     rows, provenance = discover(root, manifest, allow_resplit, seed)
-    classes, counts = validate_rows(rows, strict)
+    quality={}
+    # The assignment fixes supplied split membership and exact counts. Preserve
+    # those splits, disclose existing overlap, and keep rejecting label conflicts.
+    # Newly generated splits still require no cross-split byte duplicates.
+    new_split=provenance.startswith("new stratified exact-count split")
+    classes, counts = validate_rows(rows, strict, duplicate_policy="error" if new_split else "report",audit=quality)
+    if quality["cross_split_duplicate_groups"]:
+        print("DATA QUALITY: preserving supplied split sizes; byte-identical overlap:",quality["overlap_images"],
+              "; details will be saved and disclosed in the report.",flush=True)
     stats = statistics(rows)
     fingerprint = hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()
     prepared = {"rows": rows, "classes": classes, "counts": counts, "statistics": stats,
                 "fingerprint": fingerprint, "split_provenance": provenance,
-                "assignment_data": strict, "seed": seed}
+                "assignment_data": strict, "seed": seed,"data_quality_audit":quality}
     save_json(output, prepared)
     return prepared

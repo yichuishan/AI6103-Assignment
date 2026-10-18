@@ -96,3 +96,18 @@ def test_report_rejects_test_selection_mismatch(complete_report_fixture,tmp_path
 def test_large_losses_use_scientific_notation_in_table():
     assert "10^{28}" in loss_number(1.23e28)
     assert loss_number(2.5)=="2.5000"
+
+
+def test_report_discloses_supplied_split_overlap(complete_report_fixture,tmp_path):
+    prepared_path,root=complete_report_fixture
+    prepared=load_json(prepared_path)
+    prepared["data_quality_audit"]={"cross_split_duplicate_groups":2,
+            "overlap_images":{"train_val":1,"train_test":2,"val_test":0},"groups":[]}
+    save_json(prepared_path,prepared)
+    output=tmp_path/"report"
+    generate(prepared_path,root,output)
+    assert "limits the independence" in (output/"abstract.tex").read_text()
+    assert "1 validation images duplicate training bytes" in (output/"statistics.tex").read_text()
+    assert "2 test images duplicate training bytes" in (output/"limitations.tex").read_text()
+    assert "not an independent unseen-image estimate" in (output/"test.tex").read_text()
+    assert load_json(output/"data_quality_audit.json")==prepared["data_quality_audit"]

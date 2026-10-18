@@ -23,6 +23,19 @@ def loss_number(value):
     return f"{value:.4f}"
 
 
+def quality_disclosure(prepared):
+    audit=(prepared or {}).get("data_quality_audit",{})
+    if not audit.get("cross_split_duplicate_groups",0):
+        return ""
+    overlap=audit["overlap_images"]
+    return (f"A SHA-256 audit found {audit['cross_split_duplicate_groups']} byte-identical cross-split image groups: "
+            f"{overlap['train_val']} validation images duplicate training bytes, "
+            f"{overlap['train_test']} test images duplicate training bytes, and "
+            f"{overlap['val_test']} test images duplicate validation bytes. "
+            "The provided split membership, labels, and required image counts are preserved. "
+            "This content overlap can inflate validation or test performance; these scores are not fully independent estimates on unseen images. ")
+
+
 def observations(results, names):
     group = [results[n] for n in names if n in results]
     if len(group) != len(names):
@@ -91,6 +104,9 @@ def generate(prepared_path, root, output, author="AI6103 Assignment"):
     prepared = load_json(prepared_path) if Path(prepared_path).exists() else None
     if prepared and not prepared.get("assignment_data"):
         raise ValueError("Refusing to put synthetic data statistics in the assignment report")
+    quality_text=quality_disclosure(prepared)
+    if prepared and "data_quality_audit" in prepared:
+        save_json(output/"data_quality_audit.json",prepared["data_quality_audit"])
     results = {}
     for name in EXPECTED:
         p = root / name / "summary.json"
@@ -143,6 +159,8 @@ def generate(prepared_path, root, output, author="AI6103 Assignment"):
                    f"The validation-selected model, \\texttt{{{tex(test['name'])}}}, achieves {100*test['metrics']['accuracy']:.2f}\\% "
                    f"hold-out top-1 accuracy on {test['metrics']['n']} images. "
                    "All comparisons use a single fixed split and seed, so the differences are descriptive rather than significance-tested.")
+        if quality_text:
+            abstract+=" Byte-identical overlap in the supplied splits also limits the independence of the held-out estimate."
     else:
         abstract+=("This is an incomplete experimental draft: the required full-data results and final "
                    "hold-out evaluation are not yet all available. Missing values are not estimates; "
@@ -154,6 +172,7 @@ def generate(prepared_path, root, output, author="AI6103 Assignment"):
                      f"({', '.join(f'{x:.6f}' for x in s['mean'])}); the population standard deviations are "
                      f"({', '.join(f'{x:.6f}' for x in s['std'])}). "
                      "Split provenance: " + tex(prepared["split_provenance"]) + ".\n")
+        stat_text+=quality_text+"\n" if quality_text else ""
     else:
         stat_text = ("Training-set channel means and standard deviations have not yet been measured: "
                      "the assignment dataset is unavailable in the current environment. "
@@ -202,6 +221,8 @@ def generate(prepared_path, root, output, author="AI6103 Assignment"):
                 f"Its final hold-out top-1 accuracy is {100*m['accuracy']:.2f}\\% "
                 f"({m['n']} images), with cross-entropy {m['loss']:.4f}. "
                 "The test result was obtained only after freezing the validation-based choice.\n")
+        if quality_text:
+            text+="This assignment-split score must be interpreted with the byte-identical overlap reported in preprocessing; it is not an independent unseen-image estimate.\n"
     else:
         text = "The hold-out test set has not been evaluated. No test accuracy is claimed.\n"
     (output / "test.tex").write_text(text)
@@ -221,5 +242,5 @@ def generate(prepared_path, root, output, author="AI6103 Assignment"):
                      "The report cannot establish dog-breed classification performance until those runs finish. "
                      "No synthetic metrics are substituted for missing observations. The accompanying smoke "
                      "workflow validates software only. Resume the one-command workflow to populate the measured results.")
-    (output/"limitations.tex").write_text(limitations+"\n")
+    (output/"limitations.tex").write_text(limitations+" "+quality_text+"\n")
     print(notice)

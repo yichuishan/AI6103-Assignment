@@ -60,6 +60,10 @@ cat results/status.json
 新的固定种子精确数量分层划分，不把它冒充为官方划分。
 其他文件结构可显式提供 `--manifest /absolute/path/to/manifest.csv`。
 
+若原始划分含字节完全相同的图片，脚本保留指定划分和数量，将重复情况保存到
+`results/data_quality_audit.json`，并自动写入报告，说明它对验证／测试独立性的影响。
+相同图片存在冲突标签时仍报错；不会悄悄删除图片或改变标签。
+
 ```bash
 # 作者姓名会写入英文报告：
 bash run_autodl.sh /path/to/data.zip --author "Your Name"

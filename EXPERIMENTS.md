@@ -43,6 +43,14 @@ early stopping, or reduced full-run epoch budgets.
 Provided splits take priority. A CSV manifest has `path,label,split` columns,
 paths absolute or relative to `--data-root`, splits exactly `train,val,test`.
 Counts, known labels, duplicate paths and cross-split byte duplicates are checked.
+For supplied splits, same-label byte duplicates are audited and disclosed while
+preserving the assignment's exact split membership and counts. Their overlap can
+bias validation/test scores upward, so those estimates must not be described as
+fully independent unseen-image performance. Conflicting labels for identical bytes
+still fail validation. Newly generated splits retain the stricter no-overlap check.
+The audit is stored in prepared data and `results/data_quality_audit.json`, copied
+into report inserts and the final results package, and stated in the abstract,
+preprocessing, final evaluation and limitations whenever overlap is present.
 Hash checking reads image bytes but never evaluates test predictions for tuning.
 Only training pixels contribute to normalization statistics.
 

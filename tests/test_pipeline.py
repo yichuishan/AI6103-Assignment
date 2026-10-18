@@ -61,6 +61,49 @@ def test_duplicate_content_across_splits(prepared, tmp_path):
         data.validate_rows(rows, strict=False)
 
 
+def test_provided_duplicates_are_audited_without_changing_membership(prepared):
+    rows=copy.deepcopy(prepared["rows"])
+    original_bytes=Path(rows[0]["path"]).read_bytes()
+    for index in (4,6):
+        Path(rows[index]["path"]).write_bytes(original_bytes)
+    original_membership=[(r["path"],r["label"],r["split"]) for r in rows]
+    audit={}
+    classes,counts=data.validate_rows(rows,strict=False,duplicate_policy="report",audit=audit)
+    assert counts==prepared["counts"] and classes==prepared["classes"]
+    assert [(r["path"],r["label"],r["split"]) for r in rows]==original_membership
+    assert audit["cross_split_duplicate_groups"]==1
+    assert audit["images_in_cross_split_groups"]==3
+    assert audit["overlap_images"]=={"train_val":1,"train_test":1,"val_test":1}
+    assert all(Path(rows[i]["path"]).read_bytes()==original_bytes for i in (0,4,6))
+    with pytest.raises(ValueError,match="Identical image bytes across splits"):
+        data.validate_rows(rows,strict=False)
+
+
+def test_conflicting_duplicate_labels_still_rejected_in_report_policy(prepared):
+    rows=copy.deepcopy(prepared["rows"])
+    Path(rows[5]["path"]).write_bytes(Path(rows[0]["path"]).read_bytes())
+    with pytest.raises(ValueError,match="conflicting labels"):
+        data.validate_rows(rows,strict=False,duplicate_policy="report")
+
+
+def test_prepare_retains_duplicate_files_and_records_audit(tmp_path):
+    rng=np.random.default_rng(88)
+    for split in ("train","val","test"):
+        for label in ("a","b"):
+            path=tmp_path/"dataset"/split/label/"image.png"
+            path.parent.mkdir(parents=True)
+            Image.fromarray(rng.integers(0,256,(10,10,3),dtype=np.uint8)).save(path)
+    train=tmp_path/"dataset/train/a/image.png"
+    val=tmp_path/"dataset/val/a/image.png"
+    val.write_bytes(train.read_bytes())
+    output=tmp_path/"prepared.json"
+    prepared=data.prepare(tmp_path/"dataset",output,strict=False)
+    assert prepared["counts"]=={"train":2,"val":2,"test":2}
+    assert prepared["data_quality_audit"]["overlap_images"]["train_val"]==1
+    assert len(prepared["rows"])==6 and val.read_bytes()==train.read_bytes()
+    assert data.load_json(output)["data_quality_audit"]==prepared["data_quality_audit"]
+
+
 def test_assignment_counts_enforced(prepared):
     with pytest.raises(ValueError, match="Expected"):
         data.validate_rows(prepared["rows"], strict=True)
