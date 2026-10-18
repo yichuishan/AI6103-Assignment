@@ -1,0 +1,254 @@
+\documentclass[letterpaper]{article}
+\usepackage{aaai24}
+\usepackage{times}
+\usepackage{helvet}
+\usepackage{courier}
+\usepackage[hyphens]{url}
+\usepackage{graphicx}
+\urlstyle{rm}
+\def\UrlFont{\rm}
+\usepackage{natbib}
+\usepackage{caption}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{placeins}
+\frenchspacing
+\setlength{\pdfpagewidth}{8.5in}
+\setlength{\pdfpageheight}{11in}
+\pdfinfo{/TemplateVersion (2024.1)}
+\setcounter{secnumdepth}{1}
+\lstset{basicstyle=\footnotesize\ttfamily,breaklines=true,showstringspaces=false}
+
+\title{Optimization and Regularization in Dog Breed Classification}
+\author{\input{generated/author}}
+\affiliations{AI6103 Homework Assignment}
+
+\begin{document}
+\maketitle
+\input{generated/status}
+
+\begin{abstract}
+\input{generated/abstract}
+\end{abstract}
+
+\section{Experimental Protocol}
+The objective is to separate optimization effects from regularization
+effects while holding the architecture and data pipeline fixed. We use
+torchvision's \texttt{efficientnet\_v2\_s} with
+\texttt{weights=None} and a 120-way output layer
+\citep{tan2021efficientnetv2}. The default SiLU activations are retained;
+the assignment does not prescribe a separate activation-function ablation.
+All experiments use cross-entropy and SGD with momentum $m=0.9$.
+Each condition starts from a fresh random initialization with seed 42;
+later conditions do not continue training an earlier model. Checkpoints
+support recovery within a condition without changing the total epoch budget.
+The single-seed design does not establish statistical significance.
+
+The learning-rate stage consists of three 15-epoch runs. The schedule,
+weight-decay, and mixup stages consist of five 300-epoch runs, giving
+$3\times15+5\times300=1545$ training epochs in total. The initial rate
+for the long runs minimizes the final training loss in the first stage,
+as specified in the assignment. For other configuration choices we maximize
+final validation accuracy, breaking ties by lower validation cross-entropy.
+The best pre-mixup 300-epoch configuration is the control for mixup.
+The final model is selected among all five long runs using this same
+validation rule. This rule is fixed before inspecting test performance.
+Final-epoch metrics are reported rather than metrics at a selectively
+chosen epoch; the test uses the selected model's final checkpoint.
+
+\section{Data Preprocessing}
+The required split sizes are 7,155 training, 1,533 validation, and 1,534
+test images, totaling 10,222. Supplied splits are preserved. The code
+checks split sizes, label membership, repeated paths, and byte-identical
+images across splits. If only the original unsplit labelled images are
+available, an explicitly requested seeded stratified split produces these
+exact counts; its provenance is recorded and must be disclosed. Kaggle's
+unlabelled competition test set is not the assignment's labelled hold-out set.
+
+RGB images are resized using bilinear interpolation to $100\times100$.
+For each channel $c$, over the $N=7155\times100\times100$ resized training
+pixels scaled into $[0,1]$, we compute
+\begin{equation}
+ \mu_c=\frac{1}{N}\sum_{i=1}^{N}x_{ic},\qquad
+ \sigma_c=\sqrt{\frac{1}{N}\sum_{i=1}^{N}(x_{ic}-\mu_c)^2}.
+\end{equation}
+The normalized input is $z_{ic}=(x_{ic}-\mu_c)/\sigma_c$.
+This is channel-wise standardization, not full covariance whitening.
+Validation and test images never contribute to these statistics.
+\input{generated/statistics}
+
+Training augmentation is applied before normalization, so zero padding
+means black image pixels rather than zeros in normalized coordinates.
+The implemented training transform is:
+\begin{lstlisting}[language=Python]
+T.Compose([
+    T.Resize((100, 100), antialias=True),
+    T.RandomHorizontalFlip(p=0.5),
+    T.RandomCrop(100, padding=12,
+        padding_mode="constant", fill=0),
+    T.ToTensor(),
+    T.Normalize(mean, std),
+])
+\end{lstlisting}
+Validation and test use only resize, tensor conversion, and normalization.
+For comparable curves, after each training epoch we also evaluate the
+unaugmented training set with the model in evaluation mode. Thus the plotted
+training and validation CE/top-1 metrics use the same input and model-mode
+conventions. Augmented optimization loss and accuracy are logged separately.
+All epoch averages are weighted by the number of samples, including the
+last incomplete batch. The reported CE excludes the weight penalty.
+
+\input{generated/results_table}
+
+\section{Initial Learning Rate}
+We compare $\eta_0\in\{0.5,0.005,0.001\}$ for 15 epochs, with no weight
+decay or schedule. Random crop and horizontal flip are enabled in all runs.
+\input{generated/lr_observations}
+\IfFileExists{../artifacts/figures/learning_rate_report.pdf}{%
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{../artifacts/figures/learning_rate_report.pdf}
+\caption{Initial-rate experiments: clean training and validation CE (top) and
+top-1 accuracy (bottom) against epoch. Colors identify conditions; solid and dashed lines denote training and validation.}
+\label{fig:lr}
+\end{figure}}{}
+
+A large learning rate may produce oscillation or unstable updates,
+whereas a small rate can leave a randomly initialized model underoptimized
+after only 15 epochs. These mechanisms provide possible explanations,
+rather than causal conclusions from a single seed. Training
+loss and accuracy need not rank conditions identically: cross-entropy
+depends on probability calibration and confidence, whereas top-1 accuracy
+depends only on the largest score. Likewise, lowest training loss need not
+imply highest validation accuracy. The measured observations above distinguish
+the four metric rankings when the required runs are available.
+
+\section{Learning Rate Schedule}
+Cosine annealing reduces the rate smoothly, first slowly, then more rapidly,
+and finally slowly as it approaches zero. Without warm restarts, its rule is
+\begin{equation}
+ \eta_t=\frac{\eta_0}{2}\left(1+\cos\frac{\pi t}{T}\right),
+ \quad T=300,\quad 0\leq t\leq T.
+\end{equation}
+Here $t$ is the number of completed epochs. Epoch 1 uses $\eta_0$, the
+scheduler steps after each epoch, and its stored rate reaches zero at the
+boundary after epoch 300. This is the no-restart version of cosine annealing
+associated with SGDR \citep{loshchilov2017sgdr}. The normalized schedule in
+Figure~\ref{fig:cosine} is a mathematical illustration, not a training result.
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{../artifacts/figures/cosine_schedule.pdf}
+\caption{Prescribed constant and cosine rates over 300 epochs, normalized by
+the initial learning rate.}
+\label{fig:cosine}
+\end{figure}
+
+We compare constant and cosine rates at the selected $\eta_0$ for 300
+epochs, with all other settings unchanged and weight decay zero.
+\input{generated/schedule_observations}
+\IfFileExists{../artifacts/figures/schedule_report.pdf}{%
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{../artifacts/figures/schedule_report.pdf}
+\caption{Constant versus cosine schedule over 300 epochs. Solid: training; dashed: validation.}
+\label{fig:schedule}
+\end{figure}}{}
+Decaying the rate can permit finer late-stage optimization when a constant
+rate keeps updates noisy. A schedule can also reduce exploration too early;
+therefore an improvement is not guaranteed. Evidence should include final
+training CE, validation CE, and the late-epoch trajectories. A lower
+training CE without improved validation performance would indicate an
+optimization gain without a corresponding measured generalization gain.
+
+\section{Weight Decay}
+The two prescribed coefficients are $\lambda=5\times10^{-4}$ and
+$10^{-4}$, with cosine annealing and the selected initial learning rate.
+Both runs last 300 epochs. The zero-decay cosine run is reused as the control.
+For the implemented PyTorch SGD, the update is
+\begin{align}
+ g_t &= \nabla_w L(w_t)+\lambda w_t,\\
+ v_t &= 0.9v_{t-1}+g_t,\qquad w_{t+1}=w_t-\eta_t v_t.
+\end{align}
+The penalty is applied to all model parameters, including biases and
+normalization parameters, consistently across both conditions. Under this
+coupled SGD implementation, adding $\lambda\|w\|_2^2/2$ to the objective
+is equivalent to adding $\lambda w$ to the gradient. Decoupled weight decay
+and this coupled penalty are different with momentum or adaptive
+optimizers; this experiment uses the assignment's SGD setting, not AdamW.
+
+\input{generated/decay_observations}
+\IfFileExists{../artifacts/figures/weight_decay_report.pdf}{%
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{../artifacts/figures/weight_decay_report.pdf}
+\caption{Cosine-scheduled control and both weight-decay coefficients.
+The CE excludes the penalty. Solid: training; dashed: validation.}
+\label{fig:decay}
+\end{figure}}{}
+Moderate shrinkage may limit overly confident fitting. Excessive shrinkage
+may instead increase both training and validation losses. A smaller
+training--validation accuracy gap alone does not prove improvement: it
+can also arise when training performance deteriorates. The relevant
+evidence is whether validation accuracy or CE improves, together with
+the corresponding training curves.
+
+\section{Mixup and Final Evaluation}
+For a random within-batch pairing $(i,j)$, mixup constructs
+\begin{align}
+ \lambda &\sim \operatorname{Beta}(0.2,0.2),\\
+ \widetilde{x} &= \lambda x_i+(1-\lambda)x_j,\\
+ \widetilde{y} &= \lambda y_i+(1-\lambda)y_j.
+\end{align}
+The loss is $\lambda\operatorname{CE}(f(\widetilde{x}),y_i)
++(1-\lambda)\operatorname{CE}(f(\widetilde{x}),y_j)$
+\citep{zhang2018mixup}. We draw one coefficient per batch and permute
+examples within the batch. Mixing occurs after cropping, flipping, and
+standardization. For fixed channel statistics, standardization is affine
+and therefore commutes with this convex mixing operation.
+
+The beta probability density is
+\begin{equation}
+ p(\lambda)=\frac{\lambda^{-0.8}(1-\lambda)^{-0.8}}{B(0.2,0.2)},
+ \quad 0<\lambda<1.
+\end{equation}
+It is symmetric and U-shaped, with integrable singularities at both
+endpoints. Consequently many mixtures are close to one constituent,
+although intermediate mixtures remain possible. Figure~\ref{fig:beta}
+plots the density on a log vertical axis without evaluating the endpoints.
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{../artifacts/figures/beta_alpha_0.2.pdf}
+\caption{The required $\operatorname{Beta}(0.2,0.2)$ density. This figure is
+analytical and does not require trained models.}
+\label{fig:beta}
+\end{figure}
+
+The mixup run lasts 300 epochs using the best pre-mixup configuration.
+\input{generated/mixup_observations}
+\IfFileExists{../artifacts/figures/mixup_report.pdf}{%
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{../artifacts/figures/mixup_report.pdf}
+\caption{Selected control versus mixup. Clean-image CE and accuracy make
+these conditions directly comparable; the mixed optimization objective
+is logged separately. Solid: training; dashed: validation.}
+\label{fig:mixup}
+\end{figure}}{}
+Mixup encourages smoother predictions between examples and may discourage
+memorization. Its soft-target optimization loss cannot be compared directly
+with ordinary hard-label training loss. We therefore compare clean-image
+metrics and inspect whether any validation improvement compensates for
+reduced training fit. An improvement is not presumed before the experiment.
+
+\input{generated/test}
+The hold-out result estimates performance on similar images under the same
+sampling and preprocessing assumptions. It is not a guarantee under domain
+shift. Test labels are never used for checkpoint or hyperparameter selection.
+
+\section{Reproducibility and Limitations}
+\input{generated/limitations}
+\FloatBarrier
+\label{body-end}
+\bibliography{references}
+\end{document}

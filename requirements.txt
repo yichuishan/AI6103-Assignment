@@ -1,0 +1,7 @@
+# Install torch/torchvision separately for your CPU or CUDA platform; see README.
+numpy==2.2.6
+Pillow==11.1.0
+matplotlib==3.10.1
+pyparsing==3.2.3
+scipy==1.15.2
+pytest==8.3.5
