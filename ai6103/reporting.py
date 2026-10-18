@@ -25,15 +25,23 @@ def loss_number(value):
 
 def quality_disclosure(prepared):
     audit=(prepared or {}).get("data_quality_audit",{})
-    if not audit.get("cross_split_duplicate_groups",0):
-        return ""
-    overlap=audit["overlap_images"]
-    return (f"A SHA-256 audit found {audit['cross_split_duplicate_groups']} byte-identical cross-split image groups: "
+    text=""
+    if audit.get("cross_split_duplicate_groups",0):
+        overlap=audit["overlap_images"]
+        text+=(f"A SHA-256 audit found {audit['cross_split_duplicate_groups']} byte-identical cross-split image groups: "
             f"{overlap['train_val']} validation images duplicate training bytes, "
             f"{overlap['train_test']} test images duplicate training bytes, and "
             f"{overlap['val_test']} test images duplicate validation bytes. "
-            "The provided split membership, labels, and required image counts are preserved. "
-            "This content overlap can inflate validation or test performance; these scores are not fully independent estimates on unseen images. ")
+            "This content overlap can bias validation or test performance; these scores are not fully independent estimates on unseen images. ")
+    if audit.get("conflicting_label_groups",0):
+        text+=(f"The audit also found {audit['conflicting_label_groups']} identical-content groups with inconsistent labels, "
+               f"involving {audit['images_in_conflicting_label_groups']} images "
+               f"({audit['training_images_in_conflicting_label_groups']} training images). "
+               "These contradictory annotations introduce label noise and can limit attainable training accuracy; "
+               "no label is chosen as correct without external review. ")
+    if text:
+        text+="The provided split membership, labels, and required image counts are preserved. "
+    return text
 
 
 def observations(results, names):
@@ -105,6 +113,9 @@ def generate(prepared_path, root, output, author="AI6103 Assignment"):
     if prepared and not prepared.get("assignment_data"):
         raise ValueError("Refusing to put synthetic data statistics in the assignment report")
     quality_text=quality_disclosure(prepared)
+    audit=(prepared or {}).get("data_quality_audit",{})
+    has_overlap=audit.get("cross_split_duplicate_groups",0)>0
+    has_conflicts=audit.get("conflicting_label_groups",0)>0
     if prepared and "data_quality_audit" in prepared:
         save_json(output/"data_quality_audit.json",prepared["data_quality_audit"])
     results = {}
@@ -159,8 +170,10 @@ def generate(prepared_path, root, output, author="AI6103 Assignment"):
                    f"The validation-selected model, \\texttt{{{tex(test['name'])}}}, achieves {100*test['metrics']['accuracy']:.2f}\\% "
                    f"hold-out top-1 accuracy on {test['metrics']['n']} images. "
                    "All comparisons use a single fixed split and seed, so the differences are descriptive rather than significance-tested.")
-        if quality_text:
+        if has_overlap:
             abstract+=" Byte-identical overlap in the supplied splits also limits the independence of the held-out estimate."
+        if has_conflicts:
+            abstract+=" Conflicting annotations on identical images are retained and explicitly audited as label noise."
     else:
         abstract+=("This is an incomplete experimental draft: the required full-data results and final "
                    "hold-out evaluation are not yet all available. Missing values are not estimates; "
@@ -221,8 +234,10 @@ def generate(prepared_path, root, output, author="AI6103 Assignment"):
                 f"Its final hold-out top-1 accuracy is {100*m['accuracy']:.2f}\\% "
                 f"({m['n']} images), with cross-entropy {m['loss']:.4f}. "
                 "The test result was obtained only after freezing the validation-based choice.\n")
-        if quality_text:
+        if has_overlap:
             text+="This assignment-split score must be interpreted with the byte-identical overlap reported in preprocessing; it is not an independent unseen-image estimate.\n"
+        if has_conflicts:
+            text+="The supplied annotation conflicts documented in preprocessing can also affect model fitting and score interpretation.\n"
     else:
         text = "The hold-out test set has not been evaluated. No test accuracy is claimed.\n"
     (output / "test.tex").write_text(text)

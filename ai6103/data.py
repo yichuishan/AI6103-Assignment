@@ -139,6 +139,7 @@ def validate_rows(rows, strict=True, duplicate_policy="error", audit=None):
         seen_content.setdefault(digest,[]).append(r)
         r["sha256"] = digest
     cross=[]
+    conflicts=[]
     overlap={"train_val":0,"train_test":0,"val_test":0}
     within_split_groups=0
     for digest,items in seen_content.items():
@@ -146,14 +147,14 @@ def validate_rows(rows, strict=True, duplicate_policy="error", audit=None):
             continue
         labels={r["label"] for r in items}
         if len(labels)>1:
-            raise ValueError(f"Identical image bytes have conflicting labels: {sorted(labels)}; "
-                             f"paths: {[r['path'] for r in items]}")
+            conflicts.append({"sha256":digest,"labels":sorted(labels),
+                              "images":[{"path":r["path"],"split":r["split"],"label":r["label"]} for r in items]})
         splits={r["split"] for r in items}
         if len(splits)<2:
             within_split_groups+=1
             continue
-        cross.append({"sha256":digest,"label":items[0]["label"],
-                      "images":[{"path":r["path"],"split":r["split"]} for r in items]})
+        cross.append({"sha256":digest,"labels":sorted(labels),
+                      "images":[{"path":r["path"],"split":r["split"],"label":r["label"]} for r in items]})
         for pair in overlap:
             earlier,later=pair.split("_")
             if earlier in splits and later in splits:
@@ -161,11 +162,18 @@ def validate_rows(rows, strict=True, duplicate_policy="error", audit=None):
     quality={"cross_split_duplicate_groups":len(cross),
              "images_in_cross_split_groups":sum(len(g["images"]) for g in cross),
              "within_split_duplicate_groups":within_split_groups,
+             "conflicting_label_groups":len(conflicts),
+             "images_in_conflicting_label_groups":sum(len(g["images"]) for g in conflicts),
+             "training_images_in_conflicting_label_groups":sum(r["split"]=="train" for g in conflicts for r in g["images"]),
+             "conflicts":conflicts,
              "overlap_images":overlap,"groups":cross,
-             "policy":"preserve supplied split membership and disclose byte-identical overlap" if duplicate_policy=="report"
-                      else "reject cross-split byte-identical images"}
+             "policy":"preserve supplied split membership and labels; disclose overlap and annotation conflicts" if duplicate_policy=="report"
+                      else "reject cross-split duplicates and conflicting labels"}
     if audit is not None:
         audit.update(quality)
+    if conflicts and duplicate_policy=="error":
+        raise ValueError(f"Identical image bytes have conflicting labels: {conflicts[0]['labels']}; "
+                         f"paths: {[r['path'] for r in conflicts[0]['images']]}")
     if cross and duplicate_policy=="error":
         raise ValueError(f"Identical image bytes across splits: {cross[0]['images'][-1]['path']}")
     return classes, dict(counts)
@@ -221,12 +229,13 @@ def prepare(root, output, manifest=None, allow_resplit=False, seed=42, strict=Tr
     rows, provenance = discover(root, manifest, allow_resplit, seed)
     quality={}
     # The assignment fixes supplied split membership and exact counts. Preserve
-    # those splits, disclose existing overlap, and keep rejecting label conflicts.
+    # those splits and original labels, disclosing overlap and annotation noise.
     # Newly generated splits still require no cross-split byte duplicates.
     new_split=provenance.startswith("new stratified exact-count split")
     classes, counts = validate_rows(rows, strict, duplicate_policy="error" if new_split else "report",audit=quality)
-    if quality["cross_split_duplicate_groups"]:
-        print("DATA QUALITY: preserving supplied split sizes; byte-identical overlap:",quality["overlap_images"],
+    if quality["cross_split_duplicate_groups"] or quality["conflicting_label_groups"]:
+        print("DATA QUALITY: preserving supplied split sizes and original labels; byte-identical overlap:",quality["overlap_images"],
+              "; conflicting-label groups:",quality["conflicting_label_groups"],
               "; details will be saved and disclosed in the report.",flush=True)
     stats = statistics(rows)
     fingerprint = hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()

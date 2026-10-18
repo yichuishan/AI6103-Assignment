@@ -79,11 +79,20 @@ def test_provided_duplicates_are_audited_without_changing_membership(prepared):
         data.validate_rows(rows,strict=False)
 
 
-def test_conflicting_duplicate_labels_still_rejected_in_report_policy(prepared):
+@pytest.mark.parametrize("duplicate_index",[1,5])
+def test_supplied_conflicting_labels_are_preserved_and_audited(prepared,duplicate_index):
     rows=copy.deepcopy(prepared["rows"])
-    Path(rows[5]["path"]).write_bytes(Path(rows[0]["path"]).read_bytes())
+    Path(rows[duplicate_index]["path"]).write_bytes(Path(rows[0]["path"]).read_bytes())
+    original=[(r["path"],r["split"],r["label"]) for r in rows]
+    audit={}
+    data.validate_rows(rows,strict=False,duplicate_policy="report",audit=audit)
+    assert original==[(r["path"],r["split"],r["label"]) for r in rows]
+    assert audit["conflicting_label_groups"]==1
+    assert audit["images_in_conflicting_label_groups"]==2
+    assert audit["training_images_in_conflicting_label_groups"]==(2 if duplicate_index==1 else 1)
+    assert audit["conflicts"][0]["labels"]==["0","1"]
     with pytest.raises(ValueError,match="conflicting labels"):
-        data.validate_rows(rows,strict=False,duplicate_policy="report")
+        data.validate_rows(rows,strict=False)
 
 
 def test_prepare_retains_duplicate_files_and_records_audit(tmp_path):
@@ -102,6 +111,24 @@ def test_prepare_retains_duplicate_files_and_records_audit(tmp_path):
     assert prepared["data_quality_audit"]["overlap_images"]["train_val"]==1
     assert len(prepared["rows"])==6 and val.read_bytes()==train.read_bytes()
     assert data.load_json(output)["data_quality_audit"]==prepared["data_quality_audit"]
+
+
+def test_prepare_keeps_original_conflicting_training_annotations(tmp_path):
+    rng=np.random.default_rng(89)
+    for split in ("train","val","test"):
+        for breed in ("japanese_spaniel","papillon"):
+            path=tmp_path/"dataset"/split/breed/"image.png"
+            path.parent.mkdir(parents=True)
+            Image.fromarray(rng.integers(0,256,(10,10,3),dtype=np.uint8)).save(path)
+    first=tmp_path/"dataset/train/japanese_spaniel/image.png"
+    second=tmp_path/"dataset/train/papillon/image.png"
+    second.write_bytes(first.read_bytes())
+    prepared=data.prepare(tmp_path/"dataset",tmp_path/"prepared.json",strict=False)
+    assert len(prepared["rows"])==6
+    assert prepared["data_quality_audit"]["conflicting_label_groups"]==1
+    assert prepared["data_quality_audit"]["cross_split_duplicate_groups"]==0
+    assert prepared["data_quality_audit"]["conflicts"][0]["labels"]==["japanese_spaniel","papillon"]
+    assert {r["label"] for r in prepared["rows"] if r["split"]=="train"}=={"japanese_spaniel","papillon"}
 
 
 def test_assignment_counts_enforced(prepared):

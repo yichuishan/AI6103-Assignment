@@ -111,3 +111,21 @@ def test_report_discloses_supplied_split_overlap(complete_report_fixture,tmp_pat
     assert "2 test images duplicate training bytes" in (output/"limitations.tex").read_text()
     assert "not an independent unseen-image estimate" in (output/"test.tex").read_text()
     assert load_json(output/"data_quality_audit.json")==prepared["data_quality_audit"]
+
+
+def test_training_label_noise_is_not_misreported_as_test_leakage(complete_report_fixture,tmp_path):
+    prepared_path,root=complete_report_fixture
+    prepared=load_json(prepared_path)
+    prepared["data_quality_audit"]={"cross_split_duplicate_groups":0,
+            "overlap_images":{"train_val":0,"train_test":0,"val_test":0},"groups":[],
+            "conflicting_label_groups":1,"images_in_conflicting_label_groups":2,
+            "training_images_in_conflicting_label_groups":2}
+    save_json(prepared_path,prepared)
+    output=tmp_path/"report"
+    generate(prepared_path,root,output)
+    assert "label noise" in (output/"abstract.tex").read_text()
+    assert "limits the independence" not in (output/"abstract.tex").read_text()
+    assert "inconsistent labels" in (output/"statistics.tex").read_text()
+    assert "annotation conflicts" in (output/"test.tex").read_text()
+    assert "not an independent unseen-image estimate" not in (output/"test.tex").read_text()
+    assert "2 training images" in (output/"limitations.tex").read_text()

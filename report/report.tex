@@ -63,7 +63,8 @@ test images, totaling 10,222. Supplied splits are preserved. The code
 checks split sizes, label membership, repeated paths, and audits byte-identical
 images across splits. Supplied split membership is retained even when duplicate
 bytes are found; the measured overlap is disclosed rather than silently removing
-images. Conflicting labels for identical bytes are rejected. If only the original unsplit labelled images are
+images. Conflicting labels for identical bytes are retained as supplied and
+quantified as annotation inconsistency. If only the original unsplit labelled images are
 available, an explicitly requested seeded stratified split produces these
 exact counts; its provenance is recorded and must be disclosed. Kaggle's
 unlabelled competition test set is not the assignment's labelled hold-out set.

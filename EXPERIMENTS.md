@@ -47,7 +47,9 @@ For supplied splits, same-label byte duplicates are audited and disclosed while
 preserving the assignment's exact split membership and counts. Their overlap can
 bias validation/test scores upward, so those estimates must not be described as
 fully independent unseen-image performance. Conflicting labels for identical bytes
-still fail validation. Newly generated splits retain the stricter no-overlap check.
+in supplied splits are also retained, counted and disclosed as annotation noise;
+the pipeline does not choose a replacement label. The strict validation API and
+newly generated splits retain the stricter no-overlap/no-conflicting-label policy.
 The audit is stored in prepared data and `results/data_quality_audit.json`, copied
 into report inserts and the final results package, and stated in the abstract,
 preprocessing, final evaluation and limitations whenever overlap is present.
