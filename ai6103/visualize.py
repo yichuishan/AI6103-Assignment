@@ -1,5 +1,6 @@
 """Publication figures: theoretical distributions and measured training curves."""
 import csv
+import math
 import os
 from pathlib import Path
 import tempfile
@@ -78,10 +79,16 @@ def curves(root, output):
         available = [n for n in names if n in completed]
         if not available:
             continue
+        histories={name:read_history(root/name/"history.csv") for name in available}
+        peak_accuracy=max(100*r[f"{split}_accuracy"] for h in histories.values()
+                          for r in h for split in ("train","val"))
+        # Shared within each comparison, with a zero baseline and no clipping.
+        # Low-accuracy LR sweeps otherwise disappear on a fixed 0--100% axis.
+        accuracy_upper=min(100,max(5,5*math.ceil(peak_accuracy/5)))
         fig, axes = plt.subplots(2, len(available), figsize=(9.0, 4.1),
                                  squeeze=False, layout="constrained")
         for col, name in enumerate(available):
-            h = read_history(root / name / "history.csv")
+            h = histories[name]
             epochs = [r["epoch"] for r in h]
             for row, metric in enumerate(("loss", "accuracy")):
                 ax = axes[row, col]
@@ -92,7 +99,7 @@ def curves(root, output):
                 ax.set(xlabel="Epoch", ylabel="Cross-entropy" if metric=="loss" else "Top-1 accuracy (%)")
                 ax.xaxis.set_major_locator(MaxNLocator(integer=True))
                 if metric == "accuracy":
-                    ax.set_ylim(0, 100)
+                    ax.set_ylim(0, accuracy_upper)
                 if row == 0:
                     ax.set_title(name.replace("_", " "))
                     ax.legend(frameon=False, fontsize=7)
@@ -106,7 +113,7 @@ def curves(root, output):
         palette=["#126E82","#C45B28","#5B8C36"]
         all_losses=[]
         for i,name in enumerate(available):
-            h=read_history(root/name/"history.csv")
+            h=histories[name]
             epochs=[r["epoch"] for r in h]
             label=name.replace("schedule_","").replace("decay_","wd=").replace("lr_","lr=")
             for metric,ax in zip(("loss","accuracy"),compact_axes):
@@ -122,8 +129,9 @@ def curves(root, output):
         if positive and max(positive)/min(positive)>100:
             compact_axes[0].set_yscale("log")
             compact_axes[0].set_ylabel("CE (log scale)")
-        compact_axes[0].legend(frameon=False,fontsize=9,ncol=2,loc="upper center")
-        compact_axes[1].set_ylim(0,100)
+        compact_axes[0].legend(frameon=False,fontsize=9,ncol=2,loc="lower left",
+                               bbox_to_anchor=(0,1.01),borderaxespad=0)
+        compact_axes[1].set_ylim(0,accuracy_upper)
         if smoke:
             compact.suptitle("SYNTHETIC VERIFICATION",color="#A52A2A",fontsize=9)
         save_figure(compact,output/(group+"_report"))
