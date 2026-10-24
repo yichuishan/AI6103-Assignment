@@ -11,7 +11,7 @@
 cd /root/autodl-tmp
 git clone https://github.com/yichuishan/AI6103-Assignment.git
 cd AI6103-Assignment
-bash run_autodl.sh /root/autodl-tmp/data.zip
+bash run_autodl.sh /root/autodl-tmp/data
 ```
 
 把最后一行的数据路径换成实际 ZIP 或已解压目录。如果文件正好是
@@ -21,8 +21,8 @@ bash run_autodl.sh /root/autodl-tmp/data.zip
 脚本自动完成：
 
 1. 检查并补齐 Python 依赖和 PDF 编译工具。
-2. 安全解压 ZIP，识别数据划分，检查 7,155/1,533/1,534 张和 120 类。
-3. 只用训练集计算 RGB 均值和标准差，检查 batch size 128 的 GPU 前后向运行。
+2. 识别数据划分，检查原始 7,155/1,533/1,534 张和 120 类，再剔除重复与冲突标注记录。
+3. 只用清洗后的训练集重新计算 RGB 均值和标准差，检查 batch size 128 的 GPU 前后向运行。
 4. 验证 PDF 工具、运行测试，然后在后台执行 **8 组、共 1,545 epochs**。
 5. 根据验证集选择模型，最后评估测试集，生成全部图表、数值分析和报告。
 6. 输出结果压缩包。全部文件只保存在 AutoDL 服务器上。
@@ -34,15 +34,15 @@ epoch 记录耗时；不要将缩短的功能测试结果用于作业。中断�
 ## 查看和下载结果
 
 ```bash
-tail -f results/pipeline.log
-cat results/status.json
+tail -f results_cleaned/pipeline.log
+cat results_cleaned/status.json
 ```
 
-- **`results/AI6103_results.zip`**：最终结果包，包含报告、图表、指标和日志数据。
-- **`results/report/report.pdf`**：英文报告。
-- `results/report/generated/results.csv`：各条件最终训练/验证 loss 和 accuracy。
-- `results/artifacts/figures/`：全部 PDF/PNG 图，含独立大图和报告用图。
-- `results/runs/`：每组逐 epoch CSV、检查点和选择记录；模型文件不放入结果包。
+- **`results_cleaned/AI6103_results.zip`**：最终结果包，包含报告、图表、指标和日志数据。
+- **`results_cleaned/report/report.pdf`**：英文报告。
+- `results_cleaned/report/generated/results.csv`：各条件最终训练/验证 loss 和 accuracy。
+- `results_cleaned/artifacts/figures/`：全部 PDF/PNG 图，含独立大图和报告用图。
+- `results_cleaned/runs/`：每组逐 epoch CSV、检查点和选择记录；模型文件不放入结果包。
 
 `status.json` 的 `state` 为 `complete` 才表示整个流程成功。错误会进入
 `failed`，详细原因见终端或日志。未完成的真实实验不会被填成估计结果。
@@ -64,10 +64,23 @@ cat results/status.json
 新的固定种子精确数量分层划分，不把它冒充为官方划分。
 其他文件结构可显式提供 `--manifest /absolute/path/to/manifest.csv`。
 
-若原始划分含字节完全相同的图片，脚本保留指定划分和数量，将重复情况保存到
-`results/data_quality_audit.json`，并自动写入报告，说明它对验证／测试独立性的影响。
-给定数据中相同图片存在不同标签时，同样保留并记录为标注冲突，报告说明标签噪声的影响；
-不会擅自删除图片、选择标签或改变划分。缺失文件、无效类别和数量不符仍会报错。
+训练前按以下规则清洗全部原始记录：
+
+- 文件 SHA-256 相同后，再逐字节确认内容一致。
+- 同一内容对应不同标签：整组剔除，不任选一个标签。
+- 标签一致的重复组：只保留一份；跨集合优先保留测试集，其次验证集、训练集，同集合内按路径排序选择。
+- 只从实验清单中排除，不删除或覆盖原始图片、CSV；不把图片转移到其他集合。
+- 原始数量检查仍保留；清洗后的数量按实际保留记录计算，不补样凑数。
+- 清洗后再次检查无字节重复／标签冲突，确认训练类别仍完整，再重算训练集均值和标准差。
+
+`results_cleaned/cleaning_summary.json` 保存原始／保留／剔除数量和原因，
+`removed_images.csv` 列出每个剔除文件，`cleaned_manifest.csv` 是实际用于训练、验证和测试的清单。
+原始质量审计包含所有重复组（含集合内部重复），保存在 `data_quality_audit.json`。
+这些文件会纳入最终结果包，报告的预处理部分自动列出清洗规则和实际样本数。
+
+重新训练默认写入 **`results_cleaned/`**，旧的 `results/` 保留。
+清洗策略加入数据指纹和运行配置，旧 prepared 文件和检查点不能用于本次恢复。
+本次实际清洗后的测试集与之前的原始测试集不同，前后分数的样本范围也不同。
 
 ```bash
 # 作者姓名会写入英文报告：
@@ -95,7 +108,8 @@ bash run_autodl.sh --smoke --foreground --output /tmp/ai6103-smoke
 ```
 
 `--smoke` 需要已有 CPU 或 CUDA PyTorch，使用真实网络，但只有 12 张合成图、
-每组 2 epochs。正式报告生成器会拒绝合成统计和结果。
+每组 2 epochs，并使用适合小批次的较低学习率。正式作业仍使用 0.5/0.005/0.001、
+batch 128 和规定的 15/300 epochs。正式报告生成器会拒绝合成统计和结果。
 
 也可用 `python -m ai6103.cli --help` 分别运行 prepare/run/test/plot/report。
 报告使用未修改的 AAAI 2024 样式，来源见 [STYLE_SOURCE.md](report/STYLE_SOURCE.md)。

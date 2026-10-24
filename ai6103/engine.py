@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 from torchvision import __version__ as vision_version
 from torchvision.models import efficientnet_v2_s
 
-from .data import DogDataset, load_json, save_json
+from .data import CLEANING_POLICY, DogDataset, load_json, save_json
 
 
 @dataclass(frozen=True)
@@ -229,8 +229,11 @@ def run_experiment(prepared, exp, out, device="cpu", workers=0, smoke=False, sto
 
 
 def lr_experiments(seed=42, smoke=False):
+    # The tiny fixture's batch-2 gradients are unstable at the assignment's 0.5.
+    # Smoke checks control flow only; formal rates and epoch budgets stay fixed.
+    rates = (0.0005, 0.00005, 0.00001) if smoke else (0.5, 0.005, 0.001)
     return [Experiment(f"lr_{lr:g}", "lr", lr, 2 if smoke else 15,
-                       batch_size=2 if smoke else 128, seed=seed) for lr in (0.5, 0.005, 0.001)]
+                       batch_size=2 if smoke else 128, seed=seed) for lr in rates]
 
 
 def completed(root, names):
@@ -254,6 +257,8 @@ def best_validation(results):
 def run_pipeline(prepared, root, stage="all", device="cpu", workers=0, seed=42, smoke=False, precision="fp32"):
     if not smoke and not prepared.get("assignment_data"):
         raise ValueError("Non-assignment data cannot be used for full experiments")
+    if not smoke and prepared.get("cleaning",{}).get("policy") != CLEANING_POLICY:
+        raise ValueError("Prepared data use the old preprocessing policy; prepare cleaned data and use a new run directory")
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     binding = {"data_fingerprint": prepared["fingerprint"], "seed": seed, "smoke": smoke, "precision": precision}

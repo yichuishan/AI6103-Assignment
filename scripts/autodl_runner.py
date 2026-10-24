@@ -136,7 +136,7 @@ def preflight(args,work):
     ensure_dependencies(args.skip_install,args.smoke)
     ensure_tex(args.skip_install)
     from ai6103.autodata import extract_zip, find_layout, locate_dataset, file_sha256
-    from ai6103.data import load_json, prepare
+    from ai6103.data import CLEANING_POLICY, export_cleaning, load_json, prepare
     precision = choose_precision(args.precision,args.smoke)
     if args.smoke:
         dataset = work/"synthetic"
@@ -158,7 +158,8 @@ def preflight(args,work):
         root,manifest,resplit = find_layout(base,work,args.manifest)
     binding={"source":source,"root":str(root),"manifest":str(manifest) if manifest else None,
              "manifest_sha256":file_sha256(manifest) if manifest else None,
-             "resplit":resplit,"seed":args.seed,"precision":precision,"workers":args.workers}
+             "resplit":resplit,"seed":args.seed,"precision":precision,"workers":args.workers,
+             "cleaning_policy":CLEANING_POLICY}
     saved=work/"input.json"
     check_input_binding(work,binding)
     prepared=work/"prepared.json"
@@ -166,14 +167,20 @@ def preflight(args,work):
         print("Preparing split validation and training-only RGB statistics...",flush=True)
         prepare(root,prepared,manifest,resplit,args.seed,strict=not args.smoke)
     p=load_json(prepared)
-    if any(file_sha256(r["path"]) != r["sha256"] for r in p["rows"]):
+    if p.get("cleaning",{}).get("policy") != CLEANING_POLICY:
+        raise ValueError("Prepared data use the old preprocessing policy. Choose a new --output directory (results_cleaned).")
+    source_images = p["rows"] + p["cleaning"]["removed_images"]
+    if any(file_sha256(r["path"]) != r["sha256"] for r in source_images):
         raise ValueError("Prepared dataset images have changed; use a new output directory")
+    export_cleaning(p, work)
     write_json(saved,binding)
     if "data_quality_audit" in p:
         write_json(work/"data_quality_audit.json",p["data_quality_audit"])
         print("DATA_QUALITY_AUDIT:",work/"data_quality_audit.json",
               p["data_quality_audit"]["overlap_images"],flush=True)
     print("SPLIT_COUNTS:",p["counts"],"RGB_STATISTICS:",p["statistics"],flush=True)
+    print("CLEANING_SUMMARY:",work/"cleaning_summary.json",
+          "REMOVED_COUNTS:",p["cleaning"]["removed_counts"],flush=True)
     if not args.smoke:
         check_gpu_batch(precision)
     copy_report(work)
@@ -224,6 +231,8 @@ def execute(config):
         archive.write(work/"input.json","input.json")
         if (work/"data_quality_audit.json").exists():
             archive.write(work/"data_quality_audit.json","data_quality_audit.json")
+        for name in ("cleaning_summary.json","cleaned_manifest.csv","removed_images.csv"):
+            archive.write(work/name,name)
     status(work,"complete",smoke=config["smoke"],package=str(package),
            report=str(work/"report/report.pdf"))
     print("COMPLETE:",package,"\nREPORT:",work/"report/report.pdf",flush=True)
@@ -232,7 +241,7 @@ def execute(config):
 def parse_args(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dataset",nargs="?",help="ZIP or extracted directory; default auto-detect /root/autodl-tmp/data.zip")
-    parser.add_argument("--output",type=Path,default=REPO/"results")
+    parser.add_argument("--output",type=Path,default=REPO/"results_cleaned")
     parser.add_argument("--manifest",type=Path)
     parser.add_argument("--seed",type=int,default=42)
     parser.add_argument("--workers",type=int,default=2)

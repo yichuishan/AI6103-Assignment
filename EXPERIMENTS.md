@@ -6,7 +6,7 @@ No answer to the assignment's prohibited “Takeaway Message” question is incl
 
 | Section | Conditions | Epochs each | Fixed settings |
 |---|---|---:|---|
-| Preprocessing | 7,155 train / 1,533 validation / 1,534 test, 120 breeds | — | 100×100; training-only RGB population mean/std |
+| Preprocessing | source: 7,155 train / 1,533 validation / 1,534 test, 120 breeds | — | 100×100; training-only RGB population mean/std |
 | Initial LR | 0.5, 0.005, 0.001 | 15 | SGD, momentum 0.9, batch 128, decay 0, constant LR |
 | Schedule | constant, cosine ending at zero | 300 | LR minimizing final training CE; decay 0 |
 | Weight decay | 0.0005, 0.0001 | 300 | same LR, cosine; reuse zero-decay cosine control |
@@ -42,19 +42,26 @@ early stopping, or reduced full-run epoch budgets.
 
 Provided splits take priority. A CSV manifest has `path,label,split` columns,
 paths absolute or relative to `--data-root`, splits exactly `train,val,test`.
-Counts, known labels, duplicate paths and cross-split byte duplicates are checked.
-For supplied splits, same-label byte duplicates are audited and disclosed while
-preserving the assignment's exact split membership and counts. Their overlap can
-bias validation/test scores upward, so those estimates must not be described as
-fully independent unseen-image performance. Conflicting labels for identical bytes
-in supplied splits are also retained, counted and disclosed as annotation noise;
-the pipeline does not choose a replacement label. The strict validation API and
-newly generated splits retain the stricter no-overlap/no-conflicting-label policy.
-The audit is stored in prepared data and `results/data_quality_audit.json`, copied
-into report inserts and the final results package, and stated in the abstract,
-preprocessing, final evaluation and limitations whenever overlap is present.
-Hash checking reads image bytes but never evaluates test predictions for tuning.
-Only training pixels contribute to normalization statistics.
+Original counts, known labels and duplicate paths are checked before cleaning.
+SHA-256 groups are confirmed by byte comparison. All records in a group with
+conflicting labels are excluded. For same-label duplicates, keep one record,
+prioritizing test, then validation, then training; within one split use the
+lexically first path. This rule does not use predictions or performance. No
+records are moved between splits, relabelled, or deleted from source storage.
+All same-label duplicates, including within-split copies, are handled.
+
+Retained data must have no repeated content or conflicting labels and must retain
+all original training classes. Split sizes are the measured retained counts, not
+the original fixed counts. Compute normalization only from retained training
+pixels. Data fingerprints include the cleaning policy. Use a fresh output/run
+directory; uncleaned checkpoints cannot resume a cleaned experiment.
+
+The original audit lists every duplicate group. `cleaning_summary.json` records
+before/after counts, residual audit and removal decisions; `removed_images.csv`
+records every exclusion, and `cleaned_manifest.csv` is the actual membership used
+by the loaders. These are exported in `results_cleaned/AI6103_results.zip` and
+summarized in the report's preprocessing section. Original data remain intact.
+Byte-level cleaning does not detect re-encoded or visually similar photographs.
 
 If official splits are unavailable, `--allow-resplit` explicitly enables an
 exact-size stratified split of `labels.csv` plus `train/<id>.jpg`. Do not call

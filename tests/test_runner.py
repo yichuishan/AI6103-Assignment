@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from scripts.autodl_runner import check_input_binding
+from scripts.autodl_runner import check_input_binding, parse_args
 
 
 def test_second_launcher_cannot_start_duplicate_workflow(tmp_path):
@@ -41,3 +41,15 @@ def test_corrected_binding_does_not_reuse_prepared_or_trained_run(tmp_path,artif
     target.write_text("existing data")
     with pytest.raises(ValueError,match="another data/configuration"):
         check_input_binding(tmp_path,{"manifest":"different.csv"})
+
+
+def test_cleaned_workflow_uses_a_separate_default_output():
+    assert parse_args([]).output.name == "results_cleaned"
+
+
+def test_cleaning_policy_change_cannot_resume_original_run(tmp_path):
+    previous={"seed":42,"manifest":"dataset.csv"}
+    (tmp_path/"input.json").write_text(json.dumps(previous))
+    (tmp_path/"prepared.json").write_text("original uncleaned data")
+    with pytest.raises(ValueError,match="another data/configuration"):
+        check_input_binding(tmp_path,{**previous,"cleaning_policy":"new-policy"})

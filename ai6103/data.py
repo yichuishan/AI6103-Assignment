@@ -13,6 +13,7 @@ from torchvision import transforms as T
 
 SPLIT_COUNTS = {"train": 7155, "val": 1533, "test": 1534}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+CLEANING_POLICY = "sha256-conflicts-drop-all-holdout-first-v1"
 
 
 def save_json(path, obj):
@@ -138,6 +139,7 @@ def validate_rows(rows, strict=True, duplicate_policy="error", audit=None):
         digest = hashlib.sha256(p.read_bytes()).hexdigest()
         seen_content.setdefault(digest,[]).append(r)
         r["sha256"] = digest
+    duplicates=[]
     cross=[]
     conflicts=[]
     overlap={"train_val":0,"train_test":0,"val_test":0}
@@ -145,7 +147,13 @@ def validate_rows(rows, strict=True, duplicate_policy="error", audit=None):
     for digest,items in seen_content.items():
         if len(items)<2:
             continue
+        # Confirm equal bytes before interpreting a shared digest as duplication.
+        reference = Path(items[0]["path"]).read_bytes()
+        if any(Path(r["path"]).read_bytes() != reference for r in items[1:]):
+            raise ValueError("SHA-256 collision: image bytes differ; cannot safely deduplicate")
         labels={r["label"] for r in items}
+        duplicates.append({"sha256":digest,"labels":sorted(labels),
+                           "images":[{"path":r["path"],"split":r["split"],"label":r["label"]} for r in items]})
         if len(labels)>1:
             conflicts.append({"sha256":digest,"labels":sorted(labels),
                               "images":[{"path":r["path"],"split":r["split"],"label":r["label"]} for r in items]})
@@ -159,7 +167,10 @@ def validate_rows(rows, strict=True, duplicate_policy="error", audit=None):
             earlier,later=pair.split("_")
             if earlier in splits and later in splits:
                 overlap[pair]+=sum(r["split"]==later for r in items)
-    quality={"cross_split_duplicate_groups":len(cross),
+    quality={"duplicate_groups":duplicates,
+             "total_duplicate_groups":len(duplicates),
+             "images_in_duplicate_groups":sum(len(g["images"]) for g in duplicates),
+             "cross_split_duplicate_groups":len(cross),
              "images_in_cross_split_groups":sum(len(g["images"]) for g in cross),
              "within_split_duplicate_groups":within_split_groups,
              "conflicting_label_groups":len(conflicts),
@@ -167,7 +178,7 @@ def validate_rows(rows, strict=True, duplicate_policy="error", audit=None):
              "training_images_in_conflicting_label_groups":sum(r["split"]=="train" for g in conflicts for r in g["images"]),
              "conflicts":conflicts,
              "overlap_images":overlap,"groups":cross,
-             "policy":"preserve supplied split membership and labels; disclose overlap and annotation conflicts" if duplicate_policy=="report"
+             "policy":"audit duplicate content and conflicting labels without altering input rows" if duplicate_policy=="report"
                       else "reject cross-split duplicates and conflicting labels"}
     if audit is not None:
         audit.update(quality)
@@ -176,7 +187,59 @@ def validate_rows(rows, strict=True, duplicate_policy="error", audit=None):
                          f"paths: {[r['path'] for r in conflicts[0]['images']]}")
     if cross and duplicate_policy=="error":
         raise ValueError(f"Identical image bytes across splits: {cross[0]['images'][-1]['path']}")
-    return classes, dict(counts)
+    return classes, {split: counts[split] for split in SPLIT_COUNTS}
+
+
+def clean_rows(rows):
+    """Exclude ambiguous groups and keep one copy of each remaining image.
+
+    Requires rows hashed by validate_rows. Membership priority is test > val >
+    train, independent of label identity, model performance, or CSV row order.
+    Original files are never changed or removed.
+    """
+    groups = {}
+    for row in rows:
+        groups.setdefault(row["sha256"], []).append(row)
+    priority = {"test": 0, "val": 1, "train": 2}
+    retained, removed = [], []
+    for items in groups.values():
+        conflict = len({r["label"] for r in items}) > 1
+        keep = None if conflict else min(items, key=lambda r: (priority[r["split"]], r["path"]))
+        for row in items:
+            if row is keep:
+                retained.append(dict(row))
+            else:
+                removed.append({**row,
+                                "reason": "conflicting_labels" if conflict else "duplicate",
+                                "retained_path": keep["path"] if keep else None})
+    # Keep loader order deterministic even when manifest rows are shuffled.
+    retained.sort(key=lambda r: (r["split"], r["path"]))
+    removed.sort(key=lambda r: (r["split"], r["path"]))
+    counts = lambda items: {split: sum(r["split"] == split for r in items) for split in SPLIT_COUNTS}
+    return retained, {
+        "policy": CLEANING_POLICY,
+        "original_counts": counts(rows), "retained_counts": counts(retained),
+        "removed_counts": counts(removed), "total_removed": len(removed),
+        "removed_conflict_images": sum(r["reason"] == "conflicting_labels" for r in removed),
+        "removed_duplicate_images": sum(r["reason"] == "duplicate" for r in removed),
+        "removed_images": removed,
+    }
+
+
+def export_cleaning(prepared, directory):
+    """Export the exact retained membership and a per-file removal ledger."""
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    fields = ["path", "label", "split", "sha256"]
+    for name, rows, columns in (
+        ("cleaned_manifest.csv", prepared["rows"], fields),
+        ("removed_images.csv", prepared["cleaning"]["removed_images"], fields + ["reason", "retained_path"]),
+    ):
+        with (directory / name).open("w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=columns)
+            writer.writeheader()
+            writer.writerows({k: r.get(k) for k in columns} for r in rows)
+    save_json(directory / "cleaning_summary.json", prepared["cleaning"])
 
 
 def statistics(rows):
@@ -228,19 +291,27 @@ def prepare(root, output, manifest=None, allow_resplit=False, seed=42, strict=Tr
         raise FileExistsError(f"Prepared data already exists: {output}; preserve it or choose a new output")
     rows, provenance = discover(root, manifest, allow_resplit, seed)
     quality={}
-    # The assignment fixes supplied split membership and exact counts. Preserve
-    # those splits and original labels, disclosing overlap and annotation noise.
-    # Newly generated splits still require no cross-split byte duplicates.
-    new_split=provenance.startswith("new stratified exact-count split")
-    classes, counts = validate_rows(rows, strict, duplicate_policy="error" if new_split else "report",audit=quality)
-    if quality["cross_split_duplicate_groups"] or quality["conflicting_label_groups"]:
-        print("DATA QUALITY: preserving supplied split sizes and original labels; byte-identical overlap:",quality["overlap_images"],
-              "; conflicting-label groups:",quality["conflicting_label_groups"],
-              "; details will be saved and disclosed in the report.",flush=True)
+    # Validate original sizes first, then allow only the reductions explained by
+    # the cleaning ledger. All conflicting labels are dropped, never relabelled.
+    classes, source_counts = validate_rows(rows, strict, duplicate_policy="report", audit=quality)
+    quality["scope"] = "source_before_cleaning"
+    rows, cleaning = clean_rows(rows)
+    if sorted({r["label"] for r in rows if r["split"] == "train"}) != classes:
+        raise ValueError("Cleaning removed an entire training class; inspect the annotation conflicts")
+    remaining_quality = {}
+    _, counts = validate_rows(rows, strict=False, audit=remaining_quality)
+    if remaining_quality["total_duplicate_groups"]:
+        raise ValueError("Duplicate image content remains after cleaning")
+    cleaning["after"] = remaining_quality
+    print("DATA CLEANING:", source_counts, "->", counts,
+          "; excluded", cleaning["removed_conflict_images"], "conflicting-label records and",
+          cleaning["removed_duplicate_images"], "duplicate copies; source files unchanged", flush=True)
     stats = statistics(rows)
-    fingerprint = hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()
-    prepared = {"rows": rows, "classes": classes, "counts": counts, "statistics": stats,
+    fingerprint = hashlib.sha256(json.dumps({"rows":rows,"cleaning_policy":CLEANING_POLICY}, sort_keys=True).encode()).hexdigest()
+    prepared = {"rows": rows, "classes": classes, "counts": counts, "source_counts":source_counts,
+                "statistics": stats, "cleaning":cleaning,
                 "fingerprint": fingerprint, "split_provenance": provenance,
                 "assignment_data": strict, "seed": seed,"data_quality_audit":quality}
     save_json(output, prepared)
+    export_cleaning(prepared, Path(output).parent)
     return prepared

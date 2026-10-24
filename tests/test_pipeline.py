@@ -95,40 +95,60 @@ def test_supplied_conflicting_labels_are_preserved_and_audited(prepared,duplicat
         data.validate_rows(rows,strict=False)
 
 
-def test_prepare_retains_duplicate_files_and_records_audit(tmp_path):
+def test_prepare_excludes_duplicates_and_recomputes_training_statistics(tmp_path):
     rng=np.random.default_rng(88)
     for split in ("train","val","test"):
         for label in ("a","b"):
-            path=tmp_path/"dataset"/split/label/"image.png"
-            path.parent.mkdir(parents=True)
-            Image.fromarray(rng.integers(0,256,(10,10,3),dtype=np.uint8)).save(path)
-    train=tmp_path/"dataset/train/a/image.png"
-    val=tmp_path/"dataset/val/a/image.png"
+            for index in range(2):
+                path=tmp_path/"dataset"/split/label/f"image{index}.png"
+                path.parent.mkdir(parents=True,exist_ok=True)
+                Image.fromarray(rng.integers(0,256,(10,10,3),dtype=np.uint8)).save(path)
+    train=tmp_path/"dataset/train/a/image0.png"
+    val=tmp_path/"dataset/val/a/image0.png"
     val.write_bytes(train.read_bytes())
     output=tmp_path/"prepared.json"
     prepared=data.prepare(tmp_path/"dataset",output,strict=False)
-    assert prepared["counts"]=={"train":2,"val":2,"test":2}
+    assert prepared["source_counts"]=={"train":4,"val":4,"test":4}
+    assert prepared["counts"]=={"train":3,"val":4,"test":4}
     assert prepared["data_quality_audit"]["overlap_images"]["train_val"]==1
-    assert len(prepared["rows"])==6 and val.read_bytes()==train.read_bytes()
+    assert len(prepared["rows"])==11 and val.read_bytes()==train.read_bytes()
+    assert str(train) not in {r["path"] for r in prepared["rows"]}
+    assert prepared["statistics"]["pixels"]==3*100*100
+    pixels=[]
+    for r in prepared["rows"]:
+        if r["split"]=="train":
+            with Image.open(r["path"]) as im:
+                pixels.append(np.asarray(T.Resize((100,100),antialias=True)(im.convert("RGB")),dtype=np.float64).reshape(-1,3)/255)
+    pixels=np.concatenate(pixels)
+    np.testing.assert_allclose(prepared["statistics"]["mean"],pixels.mean(0),atol=1e-12)
+    np.testing.assert_allclose(prepared["statistics"]["std"],pixels.std(0),atol=1e-12)
+    assert prepared["cleaning"]["after"]["total_duplicate_groups"]==0
+    assert (tmp_path/"cleaned_manifest.csv").is_file()
+    assert (tmp_path/"removed_images.csv").is_file()
     assert data.load_json(output)["data_quality_audit"]==prepared["data_quality_audit"]
 
 
-def test_prepare_keeps_original_conflicting_training_annotations(tmp_path):
+def test_prepare_drops_all_conflicting_training_annotations(tmp_path):
     rng=np.random.default_rng(89)
     for split in ("train","val","test"):
         for breed in ("japanese_spaniel","papillon"):
-            path=tmp_path/"dataset"/split/breed/"image.png"
-            path.parent.mkdir(parents=True)
-            Image.fromarray(rng.integers(0,256,(10,10,3),dtype=np.uint8)).save(path)
-    first=tmp_path/"dataset/train/japanese_spaniel/image.png"
-    second=tmp_path/"dataset/train/papillon/image.png"
+            for index in range(2):
+                path=tmp_path/"dataset"/split/breed/f"image{index}.png"
+                path.parent.mkdir(parents=True,exist_ok=True)
+                Image.fromarray(rng.integers(0,256,(10,10,3),dtype=np.uint8)).save(path)
+    first=tmp_path/"dataset/train/japanese_spaniel/image0.png"
+    second=tmp_path/"dataset/train/papillon/image0.png"
     second.write_bytes(first.read_bytes())
     prepared=data.prepare(tmp_path/"dataset",tmp_path/"prepared.json",strict=False)
-    assert len(prepared["rows"])==6
+    assert len(prepared["rows"])==10
     assert prepared["data_quality_audit"]["conflicting_label_groups"]==1
     assert prepared["data_quality_audit"]["cross_split_duplicate_groups"]==0
     assert prepared["data_quality_audit"]["conflicts"][0]["labels"]==["japanese_spaniel","papillon"]
     assert {r["label"] for r in prepared["rows"] if r["split"]=="train"}=={"japanese_spaniel","papillon"}
+    assert not {str(first),str(second)} & {r["path"] for r in prepared["rows"]}
+    assert prepared["cleaning"]["removed_conflict_images"]==2
+    assert prepared["cleaning"]["after"]["conflicting_label_groups"]==0
+    assert first.read_bytes()==second.read_bytes()  # Excluded, never deleted.
 
 
 def test_assignment_counts_enforced(prepared):

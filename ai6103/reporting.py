@@ -25,6 +25,18 @@ def loss_number(value):
 
 def quality_disclosure(prepared):
     audit=(prepared or {}).get("data_quality_audit",{})
+    cleaning=(prepared or {}).get("cleaning")
+    if cleaning:
+        return (
+            f"File-content checks found {audit['total_duplicate_groups']} duplicate groups, "
+            f"including {audit['cross_split_duplicate_groups']} across splits and "
+            f"{audit['conflicting_label_groups']} with conflicting labels. "
+            "All records in conflicting-label groups were excluded. For each remaining duplicate group, "
+            "one copy was retained, prioritizing test, then validation, then training membership. "
+            f"This removed {cleaning['removed_conflict_images']} conflicting-label records and "
+            f"{cleaning['removed_duplicate_images']} duplicate copies. "
+            "No byte-identical images remain in the retained data. "
+        )
     text=""
     if audit.get("cross_split_duplicate_groups",0):
         overlap=audit["overlap_images"]
@@ -113,7 +125,7 @@ def generate(prepared_path, root, output, author="AI6103 Assignment"):
     if prepared and not prepared.get("assignment_data"):
         raise ValueError("Refusing to put synthetic data statistics in the assignment report")
     quality_text=quality_disclosure(prepared)
-    audit=(prepared or {}).get("data_quality_audit",{})
+    audit=(prepared or {}).get("cleaning",{}).get("after",(prepared or {}).get("data_quality_audit",{}))
     has_overlap=audit.get("cross_split_duplicate_groups",0)>0
     has_conflicts=audit.get("conflicting_label_groups",0)>0
     if prepared and "data_quality_audit" in prepared:
@@ -168,8 +180,7 @@ def generate(prepared_path, root, output, author="AI6103 Assignment"):
         abstract+=(f"The initial learning rate minimizing final training cross-entropy is {lr_winner['config']['experiment']['lr']:g}. "
                    f"Cosine annealing changes final validation accuracy by {delta:+.2f} percentage points relative to a constant rate. "
                    f"The validation-selected model, \\texttt{{{tex(test['name'])}}}, achieves {100*test['metrics']['accuracy']:.2f}\\% "
-                   f"hold-out top-1 accuracy on {test['metrics']['n']} images. "
-                   "All comparisons use a single fixed split and seed, so the differences are descriptive rather than significance-tested.")
+                   f"hold-out top-1 accuracy on {test['metrics']['n']} images.")
         if has_overlap:
             abstract+=" Byte-identical overlap in the supplied splits also limits the independence of the held-out estimate."
         if has_conflicts:
@@ -181,16 +192,31 @@ def generate(prepared_path, root, output, author="AI6103 Assignment"):
     (output/"abstract.tex").write_text(abstract+"\n")
     if prepared:
         s = prepared["statistics"]
-        stat_text = ("The measured training-set channel means (R, G, B) are "
+        stat_text = ("The training-set channel means (R, G, B) are "
                      f"({', '.join(f'{x:.6f}' for x in s['mean'])}); the population standard deviations are "
-                     f"({', '.join(f'{x:.6f}' for x in s['std'])}). "
-                     "Split provenance: " + tex(prepared["split_provenance"]) + ".\n")
+                     f"({', '.join(f'{x:.6f}' for x in s['std'])}).\n")
         stat_text+=quality_text+"\n" if quality_text else ""
     else:
         stat_text = ("Training-set channel means and standard deviations have not yet been measured: "
                      "the assignment dataset is unavailable in the current environment. "
                      "ImageNet statistics are not substituted.\n")
     (output / "statistics.tex").write_text(stat_text)
+    if prepared and "counts" in prepared:
+        counts = prepared["counts"]
+        original = prepared.get("source_counts", counts)
+        data_summary = (
+            f"\\newcommand{{\\TrainingCount}}{{{counts['train']}}}\n"
+            f"The supplied dataset contains {sum(original.values()):,} images across 120 dog breeds: "
+            f"{original['train']:,} training, {original['val']:,} validation, and {original['test']:,} test images. "
+        )
+        if prepared.get("cleaning"):
+            data_summary += (f"After removing duplicates and conflicting-label records, the retained splits contain "
+                             f"{counts['train']:,}, {counts['val']:,}, and {counts['test']:,} images, respectively. "
+                             "Normalization statistics and all reported metrics use these retained splits.\n")
+    else:
+        data_summary = (r"\newcommand{\TrainingCount}{n_{\mathrm{train}}}"+"\n"
+                        "The dataset contains 120 dog breeds. Retained split sizes will be reported after preprocessing.\n")
+    (output / "data_summary.tex").write_text(data_summary)
     table = [r"\begin{table*}[t]", r"\centering", r"\begin{tabular}{lrrrrr}", r"\toprule",
              r"Experiment & Epochs & Train CE & Val. CE & Train acc. (\%) & Val. acc. (\%) \\", r"\midrule"]
     stream = io.StringIO()

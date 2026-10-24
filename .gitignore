@@ -6,6 +6,7 @@ data/
 runs/
 *.pt
 results/
+results_cleaned/
 artifacts/
 report/generated/
 report/report.pdf

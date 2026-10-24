@@ -73,6 +73,8 @@ def curves(root, output):
     groups = {"learning_rate": ["lr_0.5", "lr_0.005", "lr_0.001"],
               "schedule": ["schedule_constant", "schedule_cosine"],
               "weight_decay": ["schedule_cosine", "decay_0.0005", "decay_0.0001"]}
+    if smoke:
+        groups["learning_rate"] = [n for n,s in completed.items() if s["config"]["experiment"].get("stage") == "lr"]
     if (root / "mixup_baseline.json").exists():
         groups["mixup"] = [load_json(root / "mixup_baseline.json")["name"], "mixup"]
     for group, names in groups.items():

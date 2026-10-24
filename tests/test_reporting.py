@@ -129,3 +129,33 @@ def test_training_label_noise_is_not_misreported_as_test_leakage(complete_report
     assert "annotation conflicts" in (output/"test.tex").read_text()
     assert "not an independent unseen-image estimate" not in (output/"test.tex").read_text()
     assert "2 training images" in (output/"limitations.tex").read_text()
+
+
+def test_cleaned_report_uses_retained_counts_and_no_obsolete_leakage_claim(complete_report_fixture,tmp_path):
+    prepared_path,root=complete_report_fixture
+    prepared=load_json(prepared_path)
+    # Artificial cleaning totals for report logic, not measurements of the dataset.
+    prepared.update({
+        "source_counts":{"train":7155,"val":1533,"test":1534},
+        "counts":{"train":7140,"val":1530,"test":1531},
+        "data_quality_audit":{"total_duplicate_groups":15,"cross_split_duplicate_groups":10,
+                              "conflicting_label_groups":6},
+        "cleaning":{"removed_conflict_images":12,"removed_duplicate_images":9,
+                    "after":{"cross_split_duplicate_groups":0,"conflicting_label_groups":0}},
+    })
+    save_json(prepared_path,prepared)
+    test=load_json(root/"test_result.json")
+    test["metrics"]["n"]=1531
+    save_json(root/"test_result.json",test)
+    output=tmp_path/"cleaned-report"
+    generate(prepared_path,root,output)
+    summary=(output/"data_summary.tex").read_text()
+    assert r"\newcommand{\TrainingCount}{7140}" in summary
+    assert "7,140, 1,530, and 1,531" in summary
+    statistics=(output/"statistics.tex").read_text()
+    assert "12 conflicting-label records and 9 duplicate copies" in statistics
+    assert "No byte-identical images remain" in statistics
+    assert "1531 images" in (output/"test.tex").read_text()
+    assert "annotation conflicts" not in (output/"test.tex").read_text()
+    assert "limits the independence" not in (output/"abstract.tex").read_text()
+    assert "preserved" not in statistics

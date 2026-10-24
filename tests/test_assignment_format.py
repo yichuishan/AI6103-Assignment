@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from ai6103.autodata import find_layout
-from ai6103.data import discover,validate_rows
+from ai6103.data import clean_rows,discover,validate_rows
 
 
 def test_observed_assignment_format_full_counts_labels_and_known_overlap(tmp_path):
@@ -59,3 +59,8 @@ def test_observed_assignment_format_full_counts_labels_and_known_overlap(tmp_pat
         assert (min(sizes.values()),max(sizes.values()))==(details["class_size_min"],details["class_size_max"])
     assert audit["overlap_images"]=={"train_val":1,"train_test":0,"val_test":0}
     assert audit["cross_split_duplicate_groups"]==1
+    retained,cleaning=clean_rows(rows)
+    cleaned_classes,cleaned_counts=validate_rows(retained,strict=False)
+    assert cleaned_classes==classes
+    assert cleaned_counts=={"train":7154,"val":1533,"test":1534}
+    assert cleaning["removed_counts"]=={"train":1,"val":0,"test":0}
