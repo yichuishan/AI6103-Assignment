@@ -208,7 +208,11 @@ def generate(prepared_path, root, output, author="AI6103 Assignment"):
             f"{original['train']:,} training, {original['val']:,} validation, and {original['test']:,} test images. "
         )
         if prepared.get("cleaning"):
-            data_summary = f"\\newcommand{{\\TrainingCount}}{{{counts['train']}}}\n"+quality_text+"\n"
+            data_summary = (f"\\newcommand{{\\TrainingCount}}{{{counts['train']}}}\n"+quality_text+
+                            f"The training, validation, and test sets decreased from "
+                            f"{original['train']:,}, {original['val']:,}, and {original['test']:,} to "
+                            f"{counts['train']:,}, {counts['val']:,}, and {counts['test']:,} images, respectively, "
+                            f"after excluding {sum(original.values())-sum(counts.values())} duplicate or conflicting-label records.\n")
     else:
         data_summary = (r"\newcommand{\TrainingCount}{n_{\mathrm{train}}}"+"\n"
                         "The dataset contains 120 dog breeds. Retained split sizes will be reported after preprocessing.\n")
