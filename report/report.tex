@@ -48,31 +48,6 @@ once on the test set after the experiments.
 
 \section{Data Preprocessing}
 \input{generated/data_summary}
-\noindent\begin{minipage}{\columnwidth}
-The core grouping and selection code is:
-\begin{lstlisting}[language=Python]
-from pathlib import Path
-from hashlib import sha256
-
-groups = {}
-for row in rows:
-    raw = Path(row["path"]).read_bytes()
-    key = sha256(raw).hexdigest()
-    groups.setdefault(key, []).append(row)
-
-priority = {"test": 0, "val": 1, "train": 2}
-retained = []
-for group in groups.values():
-    first = Path(group[0]["path"]).read_bytes()
-    assert all(Path(r["path"]).read_bytes()
-               == first for r in group)
-    if len({r["label"] for r in group}) > 1:
-        continue
-    keep = min(group, key=lambda r:
-        (priority[r["split"]], r["path"]))
-    retained.append(keep)
-\end{lstlisting}
-\end{minipage}
 
 RGB images are resized using bilinear interpolation to $100\times100$.
 For each channel $c$, over the $N=\TrainingCount\times100\times100$ resized training
