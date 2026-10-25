@@ -98,6 +98,11 @@ def test_large_losses_use_scientific_notation_in_table():
     assert loss_number(2.5)=="2.5000"
 
 
+def test_small_nonzero_losses_are_not_displayed_as_zero():
+    assert loss_number(1.373700594768536e-5)==r"$1.374\times 10^{-5}$"
+    assert loss_number(0)=="0.0000"
+
+
 def test_report_discloses_supplied_split_overlap(complete_report_fixture,tmp_path):
     prepared_path,root=complete_report_fixture
     prepared=load_json(prepared_path)

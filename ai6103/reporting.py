@@ -17,7 +17,7 @@ def tex(text):
 
 
 def loss_number(value):
-    if abs(value) >= 10000:
+    if abs(value) >= 10000 or 0 < abs(value) < 1e-4:
         mantissa,exponent=f"{value:.3e}".split("e")
         return f"${mantissa}\\times 10^{{{int(exponent)}}}$"
     return f"{value:.4f}"
@@ -68,7 +68,7 @@ def observations(results, names):
                                    ("val_accuracy", "highest validation accuracy", True)]:
         target = (max if reverse else min)(r["final"][metric] for r in group)
         winners = [r["config"]["experiment"]["name"] for r in group if r["final"][metric] == target]
-        value = f"{100*target:.2f}\\%" if "accuracy" in metric else f"{target:.4f}"
+        value = f"{100*target:.2f}\\%" if "accuracy" in metric else loss_number(target)
         phrases.append(f"The {label} is {value}, attained by " + ", ".join(r"\texttt{"+tex(n)+"}" for n in winners) + ".")
     return " ".join(phrases) + "\n"
 
