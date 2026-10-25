@@ -28,14 +28,11 @@ def quality_disclosure(prepared):
     cleaning=(prepared or {}).get("cleaning")
     if cleaning:
         return (
-            f"File-content checks found {audit['total_duplicate_groups']} duplicate groups, "
-            f"including {audit['cross_split_duplicate_groups']} across splits and "
-            f"{audit['conflicting_label_groups']} with conflicting labels. "
-            "All records in conflicting-label groups were excluded. For each remaining duplicate group, "
-            "one copy was retained, prioritizing test, then validation, then training membership. "
-            f"This removed {cleaning['removed_conflict_images']} conflicting-label records and "
-            f"{cleaning['removed_duplicate_images']} duplicate copies. "
-            "No byte-identical images remain in the retained data. "
+            "Before image preprocessing, we group files by SHA-256 and confirm matching groups by byte comparison. "
+            "Groups with conflicting breed labels are excluded entirely. For same-label duplicates, "
+            "one copy is retained, prioritizing test, then validation, then training membership; "
+            "ties within a split use the first path in lexical order. "
+            "All subsequent preprocessing and experiments use the retained records. "
         )
     text=""
     if audit.get("cross_split_duplicate_groups",0):
@@ -195,7 +192,8 @@ def generate(prepared_path, root, output, author="AI6103 Assignment"):
         stat_text = ("The training-set channel means (R, G, B) are "
                      f"({', '.join(f'{x:.6f}' for x in s['mean'])}); the population standard deviations are "
                      f"({', '.join(f'{x:.6f}' for x in s['std'])}).\n")
-        stat_text+=quality_text+"\n" if quality_text else ""
+        if quality_text and not prepared.get("cleaning"):
+            stat_text+=quality_text+"\n"
     else:
         stat_text = ("Training-set channel means and standard deviations have not yet been measured: "
                      "the assignment dataset is unavailable in the current environment. "
@@ -210,9 +208,7 @@ def generate(prepared_path, root, output, author="AI6103 Assignment"):
             f"{original['train']:,} training, {original['val']:,} validation, and {original['test']:,} test images. "
         )
         if prepared.get("cleaning"):
-            data_summary += (f"After removing duplicates and conflicting-label records, the retained splits contain "
-                             f"{counts['train']:,}, {counts['val']:,}, and {counts['test']:,} images, respectively. "
-                             "Normalization statistics and all reported metrics use these retained splits.\n")
+            data_summary = f"\\newcommand{{\\TrainingCount}}{{{counts['train']}}}\n"+quality_text+"\n"
     else:
         data_summary = (r"\newcommand{\TrainingCount}{n_{\mathrm{train}}}"+"\n"
                         "The dataset contains 120 dog breeds. Retained split sizes will be reported after preprocessing.\n")

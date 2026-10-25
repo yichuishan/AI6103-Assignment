@@ -156,10 +156,12 @@ def test_cleaned_report_uses_retained_counts_and_no_obsolete_leakage_claim(compl
     generate(prepared_path,root,output)
     summary=(output/"data_summary.tex").read_text()
     assert r"\newcommand{\TrainingCount}{7140}" in summary
-    assert "7,140, 1,530, and 1,531" in summary
+    assert "Groups with conflicting breed labels are excluded entirely" in summary
+    assert "prioritizing test, then validation, then training" in summary
+    assert "12 conflicting-label records" not in summary
     statistics=(output/"statistics.tex").read_text()
-    assert "12 conflicting-label records and 9 duplicate copies" in statistics
-    assert "No byte-identical images remain" in statistics
+    assert "channel means" in statistics
+    assert "duplicate" not in statistics
     assert "1531 images" in (output/"test.tex").read_text()
     assert "annotation conflicts" not in (output/"test.tex").read_text()
     assert "limits the independence" not in (output/"abstract.tex").read_text()
